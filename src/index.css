@@ -1,0 +1,255 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Luxury Jewelry Mobile App Design System */
+
+@layer base {
+  :root {
+    /* Core Colors - Deep luxury palette */
+    --background: 220 15% 3%;
+    --foreground: 40 60% 95%;
+
+    --card: 220 12% 5%;
+    --card-foreground: 40 60% 92%;
+
+    --popover: 220 12% 6%;
+    --popover-foreground: 40 60% 95%;
+
+    /* Pink Pastel Primary */
+    --primary: 330 75% 75%;
+    --primary-foreground: 220 15% 3%;
+
+    /* Soft Pink Secondary */
+    --secondary: 320 70% 80%;
+    --secondary-foreground: 220 15% 3%;
+
+    --muted: 220 10% 15%;
+    --muted-foreground: 40 20% 65%;
+
+    --accent: 330 75% 75%;
+    --accent-foreground: 220 15% 3%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 40 60% 95%;
+
+    --border: 220 10% 12%;
+    --input: 220 10% 12%;
+    --ring: 330 75% 75%;
+
+    /* Luxury Design Tokens */
+    --radius: 0.75rem;
+    
+    /* Premium Gradients */
+    --gradient-luxury: linear-gradient(135deg, hsl(330 75% 75%), hsl(320 70% 80%));
+    --gradient-dark: linear-gradient(180deg, hsl(220 15% 3%), hsl(220 12% 5%));
+    --gradient-overlay: linear-gradient(180deg, transparent, hsl(220 15% 3% / 0.8));
+    
+    /* Elegant Shadows */
+    --shadow-luxury: 0 20px 60px -10px hsl(330 75% 75% / 0.2);
+    --shadow-card: 0 8px 32px -8px hsl(220 15% 0% / 0.4);
+    --shadow-glow: 0 0 40px hsl(330 75% 75% / 0.15);
+    
+    /* Smooth Transitions */
+    --transition-luxury: all 0.4s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+    --transition-quick: all 0.2s ease-out;
+
+    --sidebar-background: 0 0% 98%;
+
+    --sidebar-foreground: 240 5.3% 26.1%;
+
+    --sidebar-primary: 240 5.9% 10%;
+
+    --sidebar-primary-foreground: 0 0% 98%;
+
+    --sidebar-accent: 240 4.8% 95.9%;
+
+    --sidebar-accent-foreground: 240 5.9% 10%;
+
+    --sidebar-border: 220 13% 91%;
+
+    --sidebar-ring: 217.2 91.2% 59.8%;
+  }
+
+  /* Light theme - Vibrant and elegant */
+  .light {
+    /* Core Colors - Light luxury palette */
+    --background: 0 0% 100%;
+    --foreground: 220 15% 10%;
+
+    --card: 0 0% 98%;
+    --card-foreground: 220 15% 10%;
+
+    --popover: 0 0% 98%;
+    --popover-foreground: 220 15% 10%;
+
+    /* Pink Pastel Primary */
+    --primary: 330 85% 70%;
+    --primary-foreground: 0 0% 100%;
+
+    /* Soft Pink Secondary */
+    --secondary: 320 80% 75%;
+    --secondary-foreground: 0 0% 100%;
+
+    --muted: 40 20% 96%;
+    --muted-foreground: 220 10% 40%;
+
+    --accent: 320 80% 75%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 40 20% 90%;
+    --input: 40 20% 85%;
+    --ring: 42 100% 50%;
+
+    /* Light Theme Gradients */
+    --gradient-luxury: linear-gradient(135deg, hsl(42 100% 50%), hsl(184 90% 35%));
+    --gradient-dark: linear-gradient(180deg, hsl(0 0% 100%), hsl(40 20% 97%));
+    --gradient-overlay: linear-gradient(180deg, transparent, hsla(0, 0%, 100%, 0.8));
+    
+    /* Light Theme Shadows */
+    --shadow-luxury: 0 10px 40px -10px hsla(42, 100%, 50%, 0.2);
+    --shadow-card: 0 4px 24px -4px hsla(0, 0%, 0%, 0.1);
+    --shadow-glow: 0 0 30px hsla(42, 100%, 50%, 0.1);
+    
+    /* Sidebar specific */
+    --sidebar-background: 0 0% 100%;
+    --sidebar-foreground: 220 15% 10%;
+    --sidebar-primary: 42 100% 50%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 40 20% 96%;
+    --sidebar-accent-foreground: 220 15% 10%;
+    --sidebar-border: 40 20% 90%;
+    --sidebar-ring: 42 100% 50%;
+  }
+}
+
+/* Scroll Utilities */
+.page-scroll {
+  height: 100dvh; /* safe viewport height on mobile */
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch; /* iOS momentum scrolling */
+}
+
+.touch-scroll {
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+    box-sizing: border-box;
+  }
+
+  html, body {
+    @apply h-full w-full m-0 p-0;
+    max-width: 100vw;
+    overflow-x: hidden;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    width: 100%;
+    max-width: 100vw;
+    overflow-x: hidden;
+  }
+  
+  /* Hindi/Devanagari font support */
+  .font-hindi {
+    font-family: 'Noto Sans Devanagari', 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  }
+  
+  /* Brand name styling with Hindi support */
+  .brand-name {
+    font-family: 'Noto Sans Devanagari', 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    font-weight: 700;
+  }
+  
+  /* Luxury typography */
+  .text-luxury {
+    background: var(--gradient-luxury);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  
+  /* Smooth scrolling */
+  html {
+    scroll-behavior: smooth;
+  }
+  
+  /* Custom scrollbar */
+  ::-webkit-scrollbar {
+    width: 4px;
+  }
+  
+  ::-webkit-scrollbar-track {
+    background: hsl(var(--muted));
+  }
+  
+  ::-webkit-scrollbar-thumb {
+    background: hsl(var(--primary));
+    border-radius: 2px;
+  }
+  
+  /* Hide scrollbar utility */
+  .scrollbar-hide {
+    -ms-overflow-style: none;  /* Internet Explorer 10+ */
+    scrollbar-width: none;  /* Firefox */
+  }
+  
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;  /* Safari and Chrome */
+  }
+  
+  /* Full-viewport, touch-friendly scroll container */
+  .page-scroll {
+    height: 100dvh; /* mobile-safe viewport height */
+    width: 100%;
+    overflow-y: auto;
+    overflow-x: hidden;
+    -webkit-overflow-scrolling: touch; /* iOS momentum */
+    overscroll-behavior-y: contain; /* avoid background bounce */
+    touch-action: pan-y; /* enable vertical panning */
+  }
+
+  /* Generic helper to enable touch scrolling on any element */
+  .touch-scroll {
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-y: contain;
+    touch-action: pan-y;
+  }
+  
+  /* Text clamping */
+  .line-clamp-2 {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  
+  .line-clamp-3 {
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  
+  /* Ensure root element takes full height */
+  #root {
+    @apply h-full w-full;
+    max-width: 100vw;
+    overflow-x: hidden;
+  }
+  
+  /* Ensure viewport constraints */
+  .viewport-constrained {
+    width: 100%;
+    max-width: 100vw;
+    overflow-x: hidden;
+  }
+}

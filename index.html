@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#1a1a1a" />
+    <title>एहसास Jewellery - Premium Handcrafted Jewelry Collection</title>
+    <meta name="description" content="Discover exquisite handcrafted luxury jewelry. Premium gold, diamond, and pearl collections with elegant designs and superior craftsmanship." />
+    <meta name="author" content="Ehsaas Jewellery" />
+    <meta name="keywords" content="luxury jewelry, handcrafted jewelry, gold jewelry, diamond necklaces, premium earrings, bridal jewelry, ehsaas jewellery" />
+
+    <!-- Favicon -->
+    <link rel="icon" type="image/png" href="/ehsaas-logo.png" />
+
+    <!-- Critical inline CSS to avoid white flash before splash -->
+    <style>
+      html, body { margin: 0; padding: 0; background: #1a1a1a; height: 100%; }
+      #root { min-height: 100%; }
+      /* Reduce motion on systems that prefer it */
+      @media (prefers-reduced-motion: reduce) {
+        #splash-screen { transition: none !important; }
+      }
+    </style>
+
+    <!-- Google Fonts for Hindi (Devanagari) script -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Devanagari:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+    <meta property="og:title" content="एहसास Jewellery - Premium Handcrafted Collection" />
+    <meta property="og:description" content="Discover exquisite handcrafted luxury jewelry with premium gold, diamonds, and elegant designs." />
+    <meta property="og:type" content="website" />
+    <meta property="og:image" content="/ehsaas-logo.png" />
+
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:site" content="@ehsaas_jewellery" />
+    <meta name="twitter:image" content="/ehsaas-logo.png" />
+
+    <!-- Preload splash logo for instant paint -->
+    <link rel="preload" as="image" href="/ehsaas-logo.png" />
+  </head>
+
+  <body>
+    <!-- Splash Screen for Instant FCP -->
+    <div id="splash-screen" style="
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      z-index: 9999;
+      transition: opacity 0.3s ease-out;
+    ">
+      <div style="
+        text-align: center;
+        animation: fadeInScale 0.5s ease-out;
+      ">
+        <img src="/ehsaas-logo.png" alt="एहसास Jewellery" style="
+          width: 120px;
+          height: 120px;
+          object-fit: contain;
+          margin-bottom: 20px;
+          animation: pulse 1.5s infinite;
+        " />
+        <h1 style="
+          color: #ffffff;
+          font-family: 'Noto Sans Devanagari', sans-serif;
+          font-size: 2rem;
+          font-weight: 700;
+          margin: 0;
+          text-shadow: 0 2px 4px rgba(0,0,0,0.3);
+        ">एहसास</h1>
+        <p style="
+          color: #d4af37;
+          font-family: 'Inter', sans-serif;
+          font-size: 1rem;
+          font-weight: 500;
+          margin: 5px 0 0 0;
+          letter-spacing: 2px;
+        ">JEWELLERY</p>
+      </div>
+    </div>
+
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+    
+    <!-- Immediate splash screen hiding is now controlled by React app -->
+    
+    <style>
+      @keyframes fadeInScale {
+        0% {
+          opacity: 0;
+          transform: scale(0.8);
+        }
+        100% {
+          opacity: 1;
+          transform: scale(1);
+        }
+      }
+      
+      @keyframes pulse {
+        0%, 100% {
+          transform: scale(1);
+        }
+        50% {
+          transform: scale(1.05);
+        }
+      }
+    </style>
+    
+    <script>
+      // Track if splash screen has been hidden
+      var splashHidden = false;
+      var minimumVisibleTime = 800; // 0.8 seconds minimum for better visibility
+      var splashVisibleTime = Date.now();
+      
+      // Hide splash screen with minimum visibility time
+      function hideSplashScreen() {
+        // Don't hide if already hidden
+        if (splashHidden) return;
+        
+        var splashScreen = document.getElementById('splash-screen');
+        if (splashScreen) {
+          // Calculate elapsed time
+          var elapsedTime = Date.now() - splashVisibleTime;
+          var remainingTime = Math.max(0, minimumVisibleTime - elapsedTime);
+          
+          // Hide after remaining time
+          setTimeout(function() {
+            splashScreen.style.opacity = '0';
+            setTimeout(function() {
+              splashScreen.style.display = 'none';
+              splashHidden = true;
+            }, 300);
+          }, remainingTime);
+        }
+      }
+
+      // Hide splash screen when DOM is ready (faster than window load)
+      document.addEventListener('DOMContentLoaded', function() {
+        // Add a small delay to ensure the splash is visible
+        setTimeout(hideSplashScreen, 100);
+      });
+      
+      // Extended timeout to ensure minimum visibility even if other events are delayed
+      setTimeout(hideSplashScreen, 5000);
+    </script>
+  </body>
+</html>

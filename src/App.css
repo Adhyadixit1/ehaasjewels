@@ -1,0 +1,81 @@
+#root {
+  width: 100%;
+  height: 100vh;
+  margin: 0;
+  padding: 0;
+  overflow: auto; /* Changed from hidden to auto to allow scrolling */
+}
+
+.logo {
+  height: 6em;
+  padding: 1.5em;
+  will-change: filter;
+  transition: filter 300ms;
+}
+.logo:hover {
+  filter: drop-shadow(0 0 2em #646cffaa);
+}
+.logo.react:hover {
+  filter: drop-shadow(0 0 2em #61dafbaa);
+}
+
+@keyframes logo-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  a:nth-of-type(2) .logo {
+    animation: logo-spin infinite 20s linear;
+  }
+}
+
+.card {
+  padding: 2em;
+}
+
+.read-the-docs {
+  color: #888;
+}
+
+/* Enhanced motion blur effect for scroll */
+.motion-blur {
+  filter: blur(1.5px) brightness(0.95);
+  transition: filter 0.15s ease-out;
+  transform: scale(0.995);
+}
+
+.motion-blur * {
+  transition: transform 0.15s ease-out;
+}
+
+/* Compact product card styles */
+.product-card-compact {
+  display: flex;
+  flex-direction: column;
+  aspect-ratio: 1 / 1; /* Square cards */
+}
+
+.product-card-compact .relative {
+  flex: 1;
+}
+
+/* Ensure buttons in compact cards are appropriately sized */
+.product-card-compact .button-xs {
+  padding: 0.25rem 0.5rem;
+  font-size: 0.75rem;
+}
+
+/* Prevent horizontal overflow */
+* {
+  box-sizing: border-box;
+}
+
+body {
+  overflow-x: hidden;
+  max-width: 100vw;
+}

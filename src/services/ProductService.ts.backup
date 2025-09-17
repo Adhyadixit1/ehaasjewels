@@ -1,0 +1,265 @@
+import { supabase } from '@/integrations/supabase/client';
+
+export interface ProductData {
+  name: string;
+  description: string;
+  price: number;
+  comparePrice?: number;
+  category: string;
+  sku: string;
+  weight?: string;
+  material?: string;
+  brand?: string;
+  stockQuantity: number;
+  minStockLevel: number;
+  featured: boolean;
+  isActive: boolean;
+  shortDescription?: string;
+}
+
+export interface ProductImage {
+  id: string;
+  url: string;
+  publicId: string;
+  originalName: string;
+  size: number;
+  isPrimary?: boolean;
+  type?: 'image' | 'video';
+}
+
+export interface ProductSpecification {
+  specName: string;
+  specValue: string;
+  displayOrder?: number;
+}
+
+export class ProductService {
+  
+  /**
+   * Generate unique SKU
+   */
+  static generateSKU(category: string): string {
+    const prefix = category.substring(0, 3).toUpperCase();
+    const timestamp = Date.now().toString().slice(-6);
+    const random = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
+    return `${prefix}${timestamp}${random}`;
+  }
+
+  /**
+   * Get single product with all details
+   */
+  static async getProductById(id: string) {
+    try {
+      const { data, error } = await supabase
+        .from('products')
+        .select(`
+          *,
+          categories (name),
+          product_images (image_url, is_primary, media_type),
+          product_specifications (spec_name, spec_value, display_order)
+        `)
+        .eq('id', id)
+        .single();
+
+      if (error) {
+        throw new Error(`Failed to fetch product: ${error.message}`);
+      }
+
+      return data;
+    } catch (error) {
+      console.error('Error in getProductById:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get product reviews
+   */
+  static async getProductReviews(productId: string) {
+    try {
+      const { data, error } = await supabase
+        .from('product_reviews')
+        .select('*')
+        .eq('product_id', productId)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        throw new Error(`Failed to fetch product reviews: ${error.message}`);
+      }
+
+      return data || [];
+    } catch (error) {
+      console.error('Error in getProductReviews:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get products with optimized query
+   */
+  static async getProducts(page = 1, limit = 20) {
+    try {
+      const offset = (page - 1) * limit;
+      
+      // First get the count
+      const { count: totalCount, error: countError } = await supabase
+        .from('products')
+        .select('*', { count: 'exact', head: true })
+        .eq('is_active', true);
+
+      if (countError) {
+        console.warn('Failed to get total count:', countError.message);
+      }
+
+      // Then get the data with joins
+      const { data, error } = await supabase
+        .from('products')
+        .select(`
+          *,
+          categories (name),
+          product_images (image_url, is_primary, media_type)
+        `)
+        .eq('is_active', true)
+        .order('created_at', { ascending: false })
+        .range(offset, offset + limit - 1);
+
+      if (error) {
+        throw new Error(`Failed to fetch products: ${error.message}`);
+      }
+
+      return {
+        products: data || [],
+        total: totalCount || 0,
+        page,
+        limit,
+        totalPages: Math.ceil((totalCount || 0) / limit)
+      };
+    } catch (error) {
+      console.error('Error in getProducts:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get products by category with optimized query
+   */
+  static async getProductsByCategory(categoryId: number, page = 1, limit = 20) {
+    try {
+      const offset = (page - 1) * limit;
+      
+      // First get the count
+      const { count: totalCount, error: countError } = await supabase
+        .from('products')
+        .select('*', { count: 'exact', head: true })
+        .eq('is_active', true)
+        .eq('category_id', categoryId);
+
+      if (countError) {
+        console.warn('Failed to get total count:', countError.message);
+      }
+
+      // Then get the data with joins
+      const { data, error } = await supabase
+        .from('products')
+        .select(`
+          *,
+          categories (name),
+          product_images (image_url, is_primary, media_type)
+        `)
+        .eq('is_active', true)
+        .eq('category_id', categoryId)
+        .order('created_at', { ascending: false })
+        .range(offset, offset + limit - 1);
+
+      if (error) {
+        throw new Error(`Failed to fetch products by category: ${error.message}`);
+      }
+
+      return {
+        products: data || [],
+        total: totalCount || 0,
+        page,
+        limit,
+        totalPages: Math.ceil((totalCount || 0) / limit)
+      };
+    } catch (error) {
+      console.error('Error in getProductsByCategory:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get featured products
+   */
+  static async getFeaturedProducts(limit = 24) {
+    try {
+      const { data, error } = await supabase
+        .from('products')
+        .select(`
+          *,
+          categories (name),
+          product_images (image_url, is_primary, media_type)
+        `)
+        .eq('is_active', true)
+        .eq('featured', true)
+        .order('created_at', { ascending: false })
+        .limit(limit);
+
+      if (error) {
+        throw new Error(`Failed to fetch featured products: ${error.message}`);
+      }
+
+      return data || [];
+    } catch (error) {
+      console.error('Error in getFeaturedProducts:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get categories
+   */
+  static async getCategories() {
+    try {
+      const { data, error } = await supabase
+        .from('categories')
+        .select('*')
+        .order('name');
+
+      if (error) {
+        throw new Error(`Failed to fetch categories: ${error.message}`);
+      }
+
+      return data || [];
+    } catch (error) {
+      console.error('Error in getCategories:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get category by name
+   */
+  static async getCategoryByName(name: string) {
+    try {
+      const { data, error } = await supabase
+        .from('categories')
+        .select('*')
+        .eq('name', name)
+        .single();
+
+      if (error) {
+        if (error.code === 'PGRST116') {
+          // No rows found
+          return null;
+        }
+        throw new Error(`Failed to fetch category: ${error.message}`);
+      }
+
+      return data;
+    } catch (error) {
+      console.error('Error in getCategoryByName:', error);
+      throw error;
+    }
+  }
+}
