@@ -12,6 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { 
+  AlertTriangle,
   Bell, 
   CheckCircle, 
   Database, 
@@ -23,6 +24,7 @@ import {
   Upload, 
   X 
 } from "lucide-react";
+import { analyticsService } from "@/services/AnalyticsService";
 
 export default function AdminSettings() {
   const { toast } = useToast();
