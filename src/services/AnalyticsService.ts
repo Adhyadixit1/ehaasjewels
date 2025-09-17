@@ -34,6 +34,7 @@ export class AnalyticsService {
    */
   async updateSettings(newSettings: Partial<AnalyticsSettings>): Promise<void> {
     try {
+      console.log('🔄 Updating analytics settings:', newSettings);
       // Update database
       await analyticsSettingsService.updateSettings({
         google_analytics_id: newSettings.googleAnalyticsId,
@@ -43,9 +44,11 @@ export class AnalyticsService {
       
       // Update local state
       this.settings = { ...this.settings, ...newSettings };
+      console.log('💾 Analytics settings updated in local state:', this.settings);
       
       // Only reload analytics if initialized
       if (this.isInitialized) {
+        console.log('🔄 Reloading analytics after settings update...');
         this.reloadAnalytics();
       }
     } catch (error) {
@@ -99,7 +102,16 @@ export class AnalyticsService {
    * Initialize Google Analytics
    */
   private initializeGoogleAnalytics(): void {
+    // Check if we're in a browser environment
+    if (typeof window === 'undefined') {
+      console.log('❌ Skipping Google Analytics initialization - not in browser environment');
+      return;
+    }
+    
+    console.log('🔵 Initializing Google Analytics with ID:', this.settings.googleAnalyticsId);
+    
     if (!this.settings.enableTracking || !this.settings.googleAnalyticsId) {
+      console.log('❌ Skipping Google Analytics initialization - tracking disabled or no ID provided');
       return;
     }
 
@@ -113,6 +125,15 @@ export class AnalyticsService {
     script.src = `https://www.googletagmanager.com/gtag/js?id=${this.settings.googleAnalyticsId}`;
     
     document.head.appendChild(script);
+    console.log('✅ Google Analytics script injected into DOM');
+    
+    // Verify the script was added
+    const addedScript = document.getElementById('google-analytics-script');
+    if (addedScript) {
+      console.log('🔍 Google Analytics script verified in DOM');
+    } else {
+      console.error('❌ Google Analytics script NOT found in DOM after injection');
+    }
 
     // Create Google Analytics configuration
     const config = document.createElement('script');
@@ -125,6 +146,15 @@ export class AnalyticsService {
     `;
     
     document.head.appendChild(config);
+    console.log('✅ Google Analytics configuration injected into DOM');
+    
+    // Verify the config was added
+    const addedConfig = document.getElementById('google-analytics-config');
+    if (addedConfig) {
+      console.log('🔍 Google Analytics config verified in DOM');
+    } else {
+      console.error('❌ Google Analytics config NOT found in DOM after injection');
+    }
 
     console.log('✅ Google Analytics initialized with ID:', this.settings.googleAnalyticsId);
   }
@@ -133,14 +163,23 @@ export class AnalyticsService {
    * Initialize Facebook Pixel
    */
   private initializeFacebookPixel(): void {
+    // Check if we're in a browser environment
+    if (typeof window === 'undefined') {
+      console.log('❌ Skipping Facebook Pixel initialization - not in browser environment');
+      return;
+    }
+    
+    console.log('🟡 Initializing Facebook Pixel with ID:', this.settings.facebookPixelId);
+    
     if (!this.settings.enableTracking || !this.settings.facebookPixelId) {
+      console.log('❌ Skipping Facebook Pixel initialization - tracking disabled or no ID provided');
       return;
     }
 
     // Always remove existing Facebook Pixel script to ensure proper reinitialization
     this.removeFacebookPixelScript();
 
-    // Create and inject Facebook Pixel script
+    // Create and inject Facebook Pixel script using the standard initialization method
     const script = document.createElement('script');
     script.id = 'facebook-pixel-script';
     script.textContent = `
@@ -156,7 +195,21 @@ export class AnalyticsService {
       fbq('track', 'PageView');
     `;
     
+    // Add error handling
+    script.onerror = () => {
+      console.error('❌ Failed to load Facebook Pixel script');
+    };
+    
     document.head.appendChild(script);
+    console.log('✅ Facebook Pixel script injected into DOM');
+    
+    // Verify the script was added
+    const addedScript = document.getElementById('facebook-pixel-script');
+    if (addedScript) {
+      console.log('🔍 Facebook Pixel script verified in DOM');
+    } else {
+      console.error('❌ Facebook Pixel script NOT found in DOM after injection');
+    }
 
     // Add Facebook Pixel noscript fallback
     const noscript = document.createElement('noscript');
@@ -167,6 +220,15 @@ export class AnalyticsService {
     `;
     
     document.body.appendChild(noscript);
+    console.log('✅ Facebook Pixel noscript fallback added to DOM');
+    
+    // Verify the noscript was added
+    const addedNoscript = document.getElementById('facebook-pixel-noscript');
+    if (addedNoscript) {
+      console.log('🔍 Facebook Pixel noscript verified in DOM');
+    } else {
+      console.error('❌ Facebook Pixel noscript NOT found in DOM after injection');
+    }
 
     console.log('✅ Facebook Pixel initialized with ID:', this.settings.facebookPixelId);
   }
@@ -212,15 +274,16 @@ export class AnalyticsService {
    * Reload analytics scripts
    */
   public reloadAnalytics(): void {
-    // Only reload if initialized
-    if (!this.isInitialized) {
-      return;
-    }
+    console.log('🔄 Reloading analytics scripts with settings:', this.settings);
     
+    // Note: During initial initialization, isInitialized will be false
+    // But we still want to initialize the scripts, so we check if we have settings
     if (this.settings.enableTracking) {
+      console.log('▶️ Tracking is enabled, initializing analytics scripts...');
       this.initializeGoogleAnalytics();
       this.initializeFacebookPixel();
     } else {
+      console.log('⏹️ Tracking is disabled, removing analytics scripts...');
       this.removeGoogleAnalyticsScript();
       this.removeFacebookPixelScript();
     }
@@ -239,15 +302,17 @@ export class AnalyticsService {
     
     try {
       // Load settings from database
+      console.log('🔍 Loading analytics settings from database...');
       const dbSettings = await analyticsSettingsService.getFormattedSettings();
+      console.log('📊 Analytics settings loaded:', dbSettings);
       this.settings = dbSettings;
-      this.reloadAnalytics();
       this.isInitialized = true;
+      this.reloadAnalytics();
     } catch (error) {
       console.error('Failed to initialize analytics:', error);
       // Use default settings if database fails
-      this.reloadAnalytics();
       this.isInitialized = true;
+      this.reloadAnalytics();
     } finally {
       this.isInitializing = false;
     }
@@ -257,20 +322,43 @@ export class AnalyticsService {
    * Track page view (for single page applications)
    */
   trackPageView(url?: string): void {
-    if (!this.settings.enableTracking) return;
+    if (!this.settings.enableTracking) {
+      console.log('⏭️ Skipping page view tracking - tracking disabled');
+      return;
+    }
 
     const pageUrl = url || window.location.pathname + window.location.search;
+    console.log(`📍 Tracking page view for ${pageUrl}`);
 
     // Track with Google Analytics
     if (this.settings.googleAnalyticsId && typeof window.gtag !== 'undefined') {
+      console.log(`🔵 Tracking page view with Google Analytics (${this.settings.googleAnalyticsId})`);
       window.gtag('config', this.settings.googleAnalyticsId, {
         page_path: pageUrl
       });
+    } else {
+      console.log('⏭️ Skipping Google Analytics tracking - not configured or gtag not available');
     }
 
     // Track with Facebook Pixel
-    if (this.settings.facebookPixelId && typeof window.fbq !== 'undefined') {
-      window.fbq('track', 'PageView');
+    if (this.settings.facebookPixelId) {
+      if (typeof window.fbq !== 'undefined') {
+        console.log(`🟡 Tracking page view with Facebook Pixel (${this.settings.facebookPixelId})`);
+        window.fbq('track', 'PageView');
+      } else {
+        // If fbq is not available yet, try again after a short delay
+        console.log('⏳ Facebook Pixel not ready, retrying in 100ms...');
+        setTimeout(() => {
+          if (typeof window.fbq !== 'undefined') {
+            console.log(`🟡 Tracking page view with Facebook Pixel (${this.settings.facebookPixelId}) [delayed]`);
+            window.fbq('track', 'PageView');
+          } else {
+            console.log('⏭️ Skipping Facebook Pixel tracking - fbq still not available after delay');
+          }
+        }, 100);
+      }
+    } else {
+      console.log('⏭️ Skipping Facebook Pixel tracking - not configured');
     }
   }
 
@@ -278,16 +366,40 @@ export class AnalyticsService {
    * Track custom event
    */
   trackEvent(eventName: string, parameters?: Record<string, any>): void {
-    if (!this.settings.enableTracking) return;
+    if (!this.settings.enableTracking) {
+      console.log(`⏭️ Skipping event tracking (${eventName}) - tracking disabled`);
+      return;
+    }
+
+    console.log(`🎯 Tracking event: ${eventName}`, parameters);
 
     // Track with Google Analytics
     if (this.settings.googleAnalyticsId && typeof window.gtag !== 'undefined') {
+      console.log(`🔵 Tracking event with Google Analytics (${this.settings.googleAnalyticsId})`);
       window.gtag('event', eventName, parameters);
+    } else {
+      console.log('⏭️ Skipping Google Analytics event tracking - not configured or gtag not available');
     }
 
     // Track with Facebook Pixel
-    if (this.settings.facebookPixelId && typeof window.fbq !== 'undefined') {
-      window.fbq('track', eventName, parameters);
+    if (this.settings.facebookPixelId) {
+      if (typeof window.fbq !== 'undefined') {
+        console.log(`🟡 Tracking event with Facebook Pixel (${this.settings.facebookPixelId})`);
+        window.fbq('track', eventName, parameters);
+      } else {
+        // If fbq is not available yet, try again after a short delay
+        console.log(`⏳ Facebook Pixel not ready for event ${eventName}, retrying in 100ms...`);
+        setTimeout(() => {
+          if (typeof window.fbq !== 'undefined') {
+            console.log(`🟡 Tracking event with Facebook Pixel (${this.settings.facebookPixelId}) [delayed]`);
+            window.fbq('track', eventName, parameters);
+          } else {
+            console.log(`⏭️ Skipping Facebook Pixel event tracking (${eventName}) - fbq still not available after delay`);
+          }
+        }, 100);
+      }
+    } else {
+      console.log(`⏭️ Skipping Facebook Pixel event tracking (${eventName}) - not configured`);
     }
   }
 
@@ -305,30 +417,59 @@ export class AnalyticsService {
       quantity: number;
     }>;
   }): void {
-    if (!this.settings.enableTracking) return;
+    if (!this.settings.enableTracking) {
+      console.log('⏭️ Skipping purchase tracking - tracking disabled');
+      return;
+    }
+
+    console.log(`💰 Tracking purchase: ${orderData.orderId}`, orderData);
 
     // Track with Google Analytics
     if (this.settings.googleAnalyticsId && typeof window.gtag !== 'undefined') {
+      console.log(`🔵 Tracking purchase with Google Analytics (${this.settings.googleAnalyticsId})`);
       window.gtag('event', 'purchase', {
         transaction_id: orderData.orderId,
         value: orderData.value,
         currency: orderData.currency,
         items: orderData.items
       });
+    } else {
+      console.log('⏭️ Skipping Google Analytics purchase tracking - not configured or gtag not available');
     }
 
     // Track with Facebook Pixel
-    if (this.settings.facebookPixelId && typeof window.fbq !== 'undefined') {
-      window.fbq('track', 'Purchase', {
-        value: orderData.value,
-        currency: orderData.currency,
-        content_ids: orderData.items?.map(item => item.id),
-        content_type: 'product',
-        num_items: orderData.items?.reduce((sum, item) => sum + item.quantity, 0)
-      });
+    if (this.settings.facebookPixelId) {
+      if (typeof window.fbq !== 'undefined') {
+        console.log(`🟡 Tracking purchase with Facebook Pixel (${this.settings.facebookPixelId})`);
+        window.fbq('track', 'Purchase', {
+          value: orderData.value,
+          currency: orderData.currency,
+          content_ids: orderData.items?.map(item => item.id),
+          content_type: 'product',
+          num_items: orderData.items?.reduce((sum, item) => sum + item.quantity, 0)
+        });
+      } else {
+        // If fbq is not available yet, try again after a short delay
+        console.log('⏳ Facebook Pixel not ready for purchase tracking, retrying in 100ms...');
+        setTimeout(() => {
+          if (typeof window.fbq !== 'undefined') {
+            console.log(`🟡 Tracking purchase with Facebook Pixel (${this.settings.facebookPixelId}) [delayed]`);
+            window.fbq('track', 'Purchase', {
+              value: orderData.value,
+              currency: orderData.currency,
+              content_ids: orderData.items?.map(item => item.id),
+              content_type: 'product',
+              num_items: orderData.items?.reduce((sum, item) => sum + item.quantity, 0)
+            });
+          } else {
+            console.log('⏭️ Skipping Facebook Pixel purchase tracking - fbq still not available after delay');
+          }
+        }, 100);
+      }
+    } else {
+      console.log('⏭️ Skipping Facebook Pixel purchase tracking - not configured');
     }
   }
-
 }
 
 // Export singleton instance

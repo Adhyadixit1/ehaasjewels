@@ -27,6 +27,8 @@ import RefundPolicy from "@/pages/RefundPolicy";
 import ReturnPolicy from "@/pages/ReturnPolicy";
 import ShippingPolicy from "@/pages/ShippingPolicy";
 import ContactUs from "@/pages/ContactUs";
+import TestAnalytics from "@/pages/TestAnalytics";
+import TestFacebookPixel from "@/pages/TestFacebookPixel";
 import AdminLogin from "@/pages/admin/AdminLogin";
 import AdminDashboard from "@/pages/admin/AdminDashboard";
 import AdminProducts from "@/pages/admin/AdminProducts";
@@ -284,6 +286,28 @@ const router = createBrowserRouter([
         <ScrollToTop />
         <PageTransition>
           <ContactUs />
+        </PageTransition>
+      </Analytics>
+    )
+  },
+  {
+    path: "/test-analytics",
+    element: (
+      <Analytics>
+        <ScrollToTop />
+        <PageTransition>
+          <TestAnalytics />
+        </PageTransition>
+      </Analytics>
+    )
+  },
+  {
+    path: "/test-facebook-pixel",
+    element: (
+      <Analytics>
+        <ScrollToTop />
+        <PageTransition>
+          <TestFacebookPixel />
         </PageTransition>
       </Analytics>
     )

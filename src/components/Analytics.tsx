@@ -22,7 +22,9 @@ export function Analytics({ children }: AnalyticsProps) {
   useEffect(() => {
     const initAnalytics = async () => {
       try {
+        console.log('🚀 Initializing analytics service...');
         await analyticsService.initialize();
+        console.log('📊 Tracking initial page view...');
         analyticsService.trackPageView();
       } catch (error) {
         console.error('Failed to initialize analytics:', error);
@@ -35,6 +37,7 @@ export function Analytics({ children }: AnalyticsProps) {
   useEffect(() => {
     // Track page view when route changes (for SPA navigation)
     if (previousPathRef.current !== location.pathname) {
+      console.log(`📍 Tracking page view for ${location.pathname}`);
       analyticsService.trackPageView();
       previousPathRef.current = location.pathname;
     }

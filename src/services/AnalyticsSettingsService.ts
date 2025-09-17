@@ -30,10 +30,12 @@ export class AnalyticsSettingsService {
   async getSettings(): Promise<AnalyticsSettings> {
     // Check cache first
     if (this.cache && Date.now() < this.cacheExpiry) {
+      console.log('📦 Using cached analytics settings:', this.cache);
       return this.cache;
     }
 
     try {
+      console.log('🔍 Fetching analytics settings from database...');
       const { data, error } = await supabase
         .from('analytics_settings')
         .select('*')
@@ -45,6 +47,8 @@ export class AnalyticsSettingsService {
         throw error;
       }
 
+      console.log('📊 Analytics settings fetched from database:', data);
+      
       // Update cache
       this.cache = data;
       this.cacheExpiry = Date.now() + this.CACHE_DURATION;
@@ -53,7 +57,7 @@ export class AnalyticsSettingsService {
     } catch (error) {
       console.error('Failed to get analytics settings:', error);
       // Return default settings if database fails
-      return {
+      const defaultSettings = {
         id: 1,
         google_analytics_id: null,
         facebook_pixel_id: null,
@@ -61,6 +65,8 @@ export class AnalyticsSettingsService {
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString()
       };
+      console.log('🔄 Using default analytics settings:', defaultSettings);
+      return defaultSettings;
     }
   }
 
@@ -73,6 +79,7 @@ export class AnalyticsSettingsService {
     enable_tracking?: boolean;
   }): Promise<AnalyticsSettings> {
     try {
+      console.log('💾 Updating analytics settings in database:', settings);
       const { data, error } = await supabase
         .from('analytics_settings')
         .update({
@@ -90,6 +97,8 @@ export class AnalyticsSettingsService {
         throw error;
       }
 
+      console.log('✅ Analytics settings updated in database:', data);
+      
       // Update cache
       this.cache = data;
       this.cacheExpiry = Date.now() + this.CACHE_DURATION;
@@ -119,11 +128,13 @@ export class AnalyticsSettingsService {
     enableTracking: boolean;
   }> {
     const settings = await this.getSettings();
-    return {
+    const formattedSettings = {
       googleAnalyticsId: settings.google_analytics_id || '',
       facebookPixelId: settings.facebook_pixel_id || '',
       enableTracking: settings.enable_tracking
     };
+    console.log('📋 Formatted analytics settings:', formattedSettings);
+    return formattedSettings;
   }
 
   /**

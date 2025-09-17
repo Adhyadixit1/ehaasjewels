@@ -1,40 +1,28 @@
-import { useState, useEffect } from 'react';
-import { motion } from 'framer-motion';
+import { useEffect, useState } from "react";
+import { AdminRoute, PermissionRoute } from "@/components/admin/ProtectedRoute";
+import { CloudinaryTest } from "@/components/admin/CloudinaryTest";
+import { DatabaseTest } from "@/components/admin/DatabaseTest";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Textarea } from "@/components/ui/textarea";
+import { useToast } from "@/hooks/use-toast";
 import { 
-  Settings, 
+  Bell, 
+  CheckCircle, 
+  Database, 
+  Globe, 
+  Key, 
+  Mail, 
   Save, 
-  Upload,
-  Globe,
-  Mail,
-  Shield,
-  Bell,
-  Palette,
-  Database,
-  Key,
-  Users,
-  AlertTriangle,
-  CheckCircle,
-  X
-} from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Separator } from '@/components/ui/separator';
-import { Switch } from '@/components/ui/switch';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { CloudinaryTest } from '@/components/admin/CloudinaryTest';
-import { DatabaseTest } from '@/components/admin/DatabaseTest';
-import { analyticsService } from '@/services/AnalyticsService';
-import { useToast } from '@/hooks/use-toast';
+  Shield, 
+  Upload, 
+  X 
+} from "lucide-react";
 
 export default function AdminSettings() {
   const { toast } = useToast();
@@ -134,6 +122,7 @@ export default function AdminSettings() {
     try {
       // Validate analytics settings if saving integrations
       if (section === 'integrations') {
+        console.log('💾 Saving analytics settings:', settings);
         if (!validateAnalyticsSettings()) {
           toast({
             title: 'Validation Error',
