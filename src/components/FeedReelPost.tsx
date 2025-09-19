@@ -25,6 +25,8 @@ interface ReelPost {
   id: string;
   videoUrl?: string;
   posterImage: string;
+  // Optional gallery for image-only reels
+  galleryImages?: string[];
   title: string;
   description: string;
   creator: string;
@@ -60,6 +62,11 @@ export function FeedReelPost({
   const [showProducts, setShowProducts] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  // Slideshow state for image-only posts
+  const [slideIndex, setSlideIndex] = useState(0);
+  const imageSlides = (post.galleryImages && post.galleryImages.length > 0)
+    ? post.galleryImages
+    : [post.posterImage];
 
   // Check if the post has a video URL
   const hasVideo = !!post.videoUrl;
@@ -119,6 +126,16 @@ export function FeedReelPost({
       video.pause();
     };
   }, [hasVideo]);
+
+  // Auto-advance slideshow for image-only posts. Keep it non-intrusive: no touch handlers.
+  useEffect(() => {
+    if (hasVideo) return;
+    if (!imageSlides || imageSlides.length <= 1) return;
+    const interval = setInterval(() => {
+      setSlideIndex((prev) => (prev + 1) % imageSlides.length);
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [hasVideo, imageSlides]);
 
   const handleLike = () => {
     onToggleLike(post.id);
@@ -193,12 +210,24 @@ export function FeedReelPost({
               onPause={() => setIsPlaying(false)}
             />
           ) : (
-            // Image element
-            <img
-              src={post.posterImage}
-              alt={post.title}
-              className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-            />
+            // Image slideshow element (non-intrusive)
+            <div className="w-full h-full relative">
+              <img
+                src={imageSlides[slideIndex]}
+                alt={post.title}
+                className="w-full h-full object-cover transition-opacity duration-500"
+              />
+              {imageSlides.length > 1 && (
+                <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex gap-1.5">
+                  {imageSlides.map((_, i) => (
+                    <span
+                      key={i}
+                      className={`w-1.5 h-1.5 rounded-full ${i === slideIndex ? 'bg-white' : 'bg-white/50'}`}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
           )}
           
           {/* Video Overlay */}

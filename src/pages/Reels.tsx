@@ -29,6 +29,8 @@ interface Reel {
   id: string;
   videoUrl?: string; // Add video URL support
   posterImage: string;
+  // Add gallery images for slideshow fallback
+  galleryImages?: string[];
   title: string;
   description: string;
   creator: string;
@@ -70,6 +72,15 @@ const getFirstAvailableImage = (product: any) => {
   return heroJewelry;
 };
 
+// Helper: get all non-video gallery images
+const getProductGalleryImages = (product: any): string[] => {
+  const imgs = (product.product_images || []) as Array<{ image_url: string; media_type?: string }>;
+  return imgs
+    .filter((img) => (img.media_type || 'image').toLowerCase() !== 'video')
+    .map((img) => img.image_url)
+    .filter(Boolean);
+};
+
 // Generate real reels data from products
 const generateReelsFromProducts = (products: any[]) => {
   const feedDescriptions = [
@@ -99,32 +110,33 @@ const generateReelsFromProducts = (products: any[]) => {
   ];
 
   return products.map((product, index) => {
-    // Check if the product has a video
+    // Check if the product has a video in the primary media
     const primaryImage = product.product_images?.find((img: any) => img.is_primary);
     const hasVideo = primaryImage?.media_type === 'video';
-    let imageUrl = primaryImage?.image_url || heroJewelry;
+    const galleryImages = getProductGalleryImages(product);
+    // Poster should be a non-video image if available, else fallback
+    const posterImage = galleryImages[0] || heroJewelry;
     
-    // Handle Cloudinary video URLs - ensure proper format
-    let videoUrl = undefined;
-    if (hasVideo && imageUrl) {
-      // If it's a Cloudinary URL, ensure it has proper video format
-      if (imageUrl.includes('cloudinary.com')) {
-        // Remove any existing format and add .mp4
-        videoUrl = imageUrl.replace(/\.(mp4|mov|webm|avi).*$/, '') + '.mp4';
-        // Also ensure it has video/upload in the URL
+    // Derive video URL from the primary video media (not from poster)
+    let videoUrl = undefined as string | undefined;
+    if (hasVideo && primaryImage?.image_url) {
+      const baseUrl = primaryImage.image_url as string;
+      if (baseUrl.includes('cloudinary.com')) {
+        // Normalize to mp4 and ensure /video/upload/
+        videoUrl = baseUrl.replace(/\.(mp4|mov|webm|avi).*$/, '') + '.mp4';
         if (!videoUrl.includes('/video/upload/')) {
           videoUrl = videoUrl.replace('/image/upload/', '/video/upload/');
         }
       } else {
-        // For non-Cloudinary URLs, just ensure .mp4 extension
-        videoUrl = imageUrl.includes('.mp4') ? imageUrl : `${imageUrl}.mp4`;
+        videoUrl = baseUrl.includes('.mp4') ? baseUrl : `${baseUrl}.mp4`;
       }
     }
 
     return {
       id: `fr${product.id}`,
       videoUrl: videoUrl,
-      posterImage: imageUrl,
+      posterImage,
+      galleryImages,
       title: feedTitles[index % feedTitles.length],
       description: feedDescriptions[index % feedDescriptions.length],
       creator: 'Ehsaas Jewellery',
@@ -138,7 +150,7 @@ const generateReelsFromProducts = (products: any[]) => {
         name: product.name,
         price: product.sale_price || product.price,
         originalPrice: product.sale_price ? product.price : undefined,
-        image: imageUrl
+        image: posterImage
       }]
     };
   });
@@ -157,6 +169,8 @@ export default function Reels() {
   const [expandedDescription, setExpandedDescription] = useState(false);
   const [isDeepLinked, setIsDeepLinked] = useState(false);
   const [videoError, setVideoError] = useState(false); // Add video error state
+  // Slideshow state for non-video reels
+  const [slideIndex, setSlideIndex] = useState(0);
   const lastScrollTime = useRef<number>(0);
   const scrollCooldown = 500;
   const touchStartY = useRef<number>(0);
@@ -170,6 +184,11 @@ export default function Reels() {
   
   // Check if current reel has video
   const hasVideo = !!currentReel?.videoUrl;
+  const gallerySlides = currentReel?.galleryImages && currentReel.galleryImages.length > 0
+    ? currentReel.galleryImages
+    : currentReel?.posterImage
+      ? [currentReel.posterImage]
+      : [];
   
   // Fetch products from database
   const { products, loading, error } = useProducts(1, 20);
@@ -192,6 +211,21 @@ export default function Reels() {
       }
     }
   }, [products]);
+
+  // Reset slideshow index on reel change
+  useEffect(() => {
+    setSlideIndex(0);
+  }, [currentReelIndex]);
+
+  // Auto-advance slideshow for image-only or video-error reels
+  useEffect(() => {
+    if (hasVideo && !videoError) return;
+    if (!gallerySlides || gallerySlides.length <= 1) return;
+    const interval = setInterval(() => {
+      setSlideIndex((prev) => (prev + 1) % gallerySlides.length);
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [hasVideo, videoError, gallerySlides]);
 
   // Handle video playback when reel changes (defer autoplay until canplay)
   useEffect(() => {
@@ -483,11 +517,26 @@ export default function Reels() {
             }}
           />
         ) : (
-          <img
-            src={currentReel.posterImage}
-            alt={currentReel.title}
-            className="w-full h-full object-cover"
-          />
+          // Non-intrusive image slideshow fallback
+          <div className="w-full h-full relative">
+            {gallerySlides.length > 0 && (
+              <img
+                src={gallerySlides[slideIndex]}
+                alt={currentReel.title}
+                className="w-full h-full object-cover transition-opacity duration-500"
+              />
+            )}
+            {gallerySlides.length > 1 && (
+              <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-2">
+                {gallerySlides.map((_, i) => (
+                  <span
+                    key={i}
+                    className={`w-2 h-2 rounded-full ${i === slideIndex ? 'bg-white' : 'bg-white/50'}`}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
         )}
         <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-black/40" />
       </div>
