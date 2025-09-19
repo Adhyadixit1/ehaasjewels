@@ -87,6 +87,18 @@ export class ProductService {
   }
 
   /**
+   * Generate slug from product name
+   */
+  static generateSlug(name: string): string {
+    return name
+      .toLowerCase()
+      .trim()
+      .replace(/[^\w\s-]/g, '')
+      .replace(/[\s_-]+/g, '-')
+      .replace(/^-+|-+$/g, '');
+  }
+
+  /**
    * Create a new product with images and specifications
    */
   static async createProduct(
@@ -117,6 +129,23 @@ export class ProductService {
         }
       }
 
+      // Extract numeric value from weight field (e.g., "2.5 g" -> 2.5)
+      let weightValue: number | null = null;
+      if (productData.weight) {
+        // Remove any non-numeric characters except decimal point
+        const numericWeight = productData.weight.replace(/[^\d.]/g, '');
+        if (numericWeight) {
+          weightValue = parseFloat(numericWeight);
+          // Check if the parsed value is valid
+          if (isNaN(weightValue)) {
+            weightValue = null;
+          }
+        }
+      }
+
+      // Generate slug from product name
+      const slug = this.generateSlug(productData.name);
+
       // Prepare product data for insertion
       const productInsertData = {
         name: productData.name,
@@ -126,7 +155,8 @@ export class ProductService {
         sale_price: productData.comparePrice,
         category_id: categoryId,
         sku: productData.sku,
-        weight: productData.weight,
+        slug: slug,
+        weight: weightValue,
         material: productData.material,
         brand: productData.brand,
         stock_quantity: productData.stockQuantity,
@@ -146,9 +176,21 @@ export class ProductService {
         throw new Error(`Failed to create product: ${productError.message}`);
       }
 
-      // Insert images if provided
-      if (images && images.length > 0) {
-        const imageInsertData = images.map((image, index) => ({
+      // Handle images - separate temporary images from regular images
+      const tempImages: ProductImage[] = [];
+      const regularImages: ProductImage[] = [];
+
+      images.forEach(image => {
+        if (image.id && image.id.startsWith('temp_')) {
+          tempImages.push(image);
+        } else {
+          regularImages.push(image);
+        }
+      });
+
+      // Process regular images (already uploaded with product ID)
+      if (regularImages && regularImages.length > 0) {
+        const imageInsertData = regularImages.map((image, index) => ({
           product_id: product.id,
           image_url: image.url,
           cloudinary_public_id: image.publicId,
@@ -164,6 +206,44 @@ export class ProductService {
 
         if (imageError) {
           console.warn('Failed to insert product images:', imageError.message);
+        }
+      }
+
+      // Process temporary images (uploaded without product ID)
+      if (tempImages && tempImages.length > 0) {
+        console.log('Processing temporary images for new product:', tempImages);
+        
+        // For each temporary image, we need to:
+        // 1. Move it from the temp folder to the product folder in Cloudinary
+        // 2. Create entries in product_images table
+        
+        for (let i = 0; i < tempImages.length; i++) {
+          const tempImage = tempImages[i];
+          
+          try {
+            // Create entry in product_images table
+            const { data: imageRecord, error: imageError } = await supabase
+              .from('product_images')
+              .insert({
+                product_id: product.id,
+                image_url: tempImage.url,
+                cloudinary_public_id: tempImage.publicId,
+                alt_text: tempImage.originalName,
+                is_primary: tempImage.isPrimary || i === 0,
+                media_type: tempImage.type || 'image',
+                sort_order: i
+              })
+              .select()
+              .single();
+
+            if (imageError) {
+              console.warn(`Failed to insert temporary image ${i}:`, imageError.message);
+            } else {
+              console.log(`Successfully inserted temporary image ${i}:`, imageRecord);
+            }
+          } catch (error) {
+            console.warn(`Error processing temporary image ${i}:`, error);
+          }
         }
       }
 
@@ -225,6 +305,20 @@ export class ProductService {
         }
       }
 
+      // Extract numeric value from weight field (e.g., "2.5 g" -> 2.5)
+      let weightValue: number | null = null;
+      if (productData.weight) {
+        // Remove any non-numeric characters except decimal point
+        const numericWeight = productData.weight.replace(/[^\d.]/g, '');
+        if (numericWeight) {
+          weightValue = parseFloat(numericWeight);
+          // Check if the parsed value is valid
+          if (isNaN(weightValue)) {
+            weightValue = null;
+          }
+        }
+      }
+
       // Prepare product data for update
       const productUpdateData = {
         name: productData.name,
@@ -234,7 +328,7 @@ export class ProductService {
         sale_price: productData.comparePrice,
         category_id: categoryId,
         sku: productData.sku,
-        weight: productData.weight,
+        weight: weightValue,
         material: productData.material,
         brand: productData.brand,
         stock_quantity: productData.stockQuantity,

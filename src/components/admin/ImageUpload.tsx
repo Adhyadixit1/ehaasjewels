@@ -25,7 +25,7 @@ interface ImageUploadProps {
   existingImages?: UploadedMedia[];
   accept?: string;
   maxFileSize?: number; // in MB
-  productId?: number; // For editing existing products
+  productId?: number; // For editing existing products - now optional
 }
 
 export function ImageUpload({
@@ -69,8 +69,54 @@ export function ImageUpload({
     setUploading(prev => [...prev, uploadId]);
 
     try {
+      // If we don't have a productId yet, we'll upload to a temporary location
+      // and handle the association later when the product is created
       if (!productId) {
-        throw new Error('Product ID is required for upload');
+        console.log('Uploading image for new product (no productId yet)');
+        
+        // Get Cloudinary configuration
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) {
+          throw new Error('User not authenticated');
+        }
+
+        // Upload to Cloudinary with a temporary folder
+        const timestamp = Date.now();
+        const tempFolder = `temp_products/${user.id}/${timestamp}`;
+        
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('upload_preset', 'ml_default'); // Use default preset
+        formData.append('folder', tempFolder);
+
+        const response = await fetch(
+          `https://api.cloudinary.com/v1_1/djxv1usyv/image/upload`,
+          {
+            method: 'POST',
+            body: formData,
+          }
+        );
+
+        if (!response.ok) {
+          throw new Error('Failed to upload to Cloudinary');
+        }
+
+        const result = await response.json();
+
+        // Create a temporary image object that will be associated with the product later
+        const tempImage: UploadedMedia = {
+          id: `temp_${timestamp}_${Math.random().toString(36).substr(2, 9)}`,
+          url: result.secure_url,
+          publicId: result.public_id,
+          originalName: file.name,
+          size: file.size,
+          isPrimary: images.length === 0,
+          type: file.type.startsWith('video/') ? 'video' : 'image',
+        };
+
+        setImages(prev => [...prev, tempImage]);
+        // Important: Return here to avoid calling uploadProductImage with undefined productId
+        return tempImage;
       }
 
       // Upload to Cloudinary and save to database using AdminService
@@ -143,12 +189,23 @@ export function ImageUpload({
     const imageToRemove = images.find(img => img.id === imageId);
     if (!imageToRemove) return;
 
+    // If this is a temporary image (starts with 'temp_'), just remove it from state
+    if (imageToRemove.id.startsWith('temp_')) {
+      console.log('Removing temporary image:', imageToRemove.id);
+      const updated = images.filter(img => img.id !== imageId);
+      setImages(updated);
+      // onImagesChange will be called in useEffect
+      setRemovingIds(prev => prev.filter(id => id !== imageId));
+      return;
+    }
+
     // Skip database removal if image doesn't have a valid ID (e.g., newly uploaded images not yet saved)
     if (!imageToRemove.id || imageToRemove.id.trim() === '') {
       console.warn('Skipping database removal for image without valid ID:', imageToRemove.url);
       const updated = images.filter(img => img.id !== imageId);
       setImages(updated);
       // onImagesChange will be called in useEffect
+      setRemovingIds(prev => prev.filter(id => id !== imageId));
       return;
     }
 
@@ -180,13 +237,31 @@ export function ImageUpload({
 
   const handleSetPrimary = async (imageId: string) => {
     try {
-      if (!productId) {
-        throw new Error('Product ID is required');
-      }
-
       const imageToSetPrimary = images.find(img => img.id === imageId);
       if (!imageToSetPrimary) {
         throw new Error('Image not found');
+      }
+
+      // If this is a temporary image, just update the local state
+      if (imageToSetPrimary.id.startsWith('temp_')) {
+        console.log('Setting temporary image as primary:', imageToSetPrimary.id);
+        setImages(prev => prev.map(img => ({
+          ...img,
+          isPrimary: img.id === imageId
+        })));
+        // onImagesChange will be called in useEffect
+        return;
+      }
+
+      // If we don't have a productId yet, just update local state
+      if (!productId) {
+        console.log('Setting image as primary (no productId yet):', imageToSetPrimary.id);
+        setImages(prev => prev.map(img => ({
+          ...img,
+          isPrimary: img.id === imageId
+        })));
+        // onImagesChange will be called in useEffect
+        return;
       }
 
       // Skip database update if image doesn't have a valid ID
