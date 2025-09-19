@@ -287,10 +287,24 @@ export default function Reels() {
   const [slideIndex, setSlideIndex] = useState(0);
   // Controls visibility (play/pause and volume) — hidden until tapped
   const [showControls, setShowControls] = useState(false);
+  // Require a user gesture before attempting audio playback
+  const [hasUserInteracted, setHasUserInteracted] = useState(false);
   const lastScrollTime = useRef<number>(0);
-  const scrollCooldown = 500;
+  // Increase cooldown to allow longer card scroll feel (similar to Instagram)
+  const scrollCooldown = 900;
   const touchStartY = useRef<number>(0);
-  const touchThreshold = 50;
+  // Increase threshold to require a more intentional swipe
+  const touchThreshold = 90;
+  // Fade control refs
+  const fadeRAF = useRef<number | null>(null);
+  const fadeTimeout = useRef<number | null>(null);
+  const prevIndexRef = useRef<number>(0);
+  // Used to cancel in-flight fades when rapidly switching reels
+  const fadeContextIdRef = useRef<number>(0);
+  // Used to cancel entire transition sequences on fast scrolling
+  const transitionIdRef = useRef<number>(0);
+  // Guard to avoid triggering multiple pre-fades during the same gesture
+  const preFadeActiveRef = useRef<boolean>(false);
   
   // Animation state for sliding
   const [slideDirection, setSlideDirection] = useState<'up' | 'down' | null>(null);
@@ -365,6 +379,18 @@ export default function Reels() {
     return () => clearTimeout(t);
   }, [showControls]);
 
+  // Listen for first user interaction to allow media playback
+  useEffect(() => {
+    if (hasUserInteracted) return;
+    const onFirstInteract = () => setHasUserInteracted(true);
+    document.addEventListener('pointerdown', onFirstInteract, { once: true });
+    document.addEventListener('keydown', onFirstInteract, { once: true });
+    return () => {
+      document.removeEventListener('pointerdown', onFirstInteract as any);
+      document.removeEventListener('keydown', onFirstInteract as any);
+    };
+  }, [hasUserInteracted]);
+
   // Fetch music for the current reel
   const fetchMusic = useCallback(async () => {
     if (!currentReel) {
@@ -395,17 +421,6 @@ export default function Reels() {
 
       // Query Supabase product_music table directly
       console.log('Querying Supabase for music with productId:', productId, 'type:', typeof productId);
-      
-      // First, check if the table exists and is accessible
-      try {
-        const { data: tableInfo, error: tableError } = await supabase
-          .rpc('get_table_info', { table_name: 'product_music' })
-          .single();
-          
-        console.log('Table info:', tableInfo);
-      } catch (tableCheckError) {
-        console.warn('Could not fetch table info (this is normal if RLS is enabled):', tableCheckError);
-      }
       
       // Now try the actual query
       const query = supabase
@@ -445,8 +460,8 @@ export default function Reels() {
           message: error.message,
           code: error.code,
           details: error.details,
-          hint: error.hint,
-          status: error.status
+          hint: error.hint
+          // status is not a standard property of PostgrestError
         });
         setMusic(null);
         return;
@@ -479,6 +494,72 @@ export default function Reels() {
     }
   }, [currentReel]);
 
+  // Helper to fade volume
+  const fadeVolume = useCallback((
+    audio: HTMLAudioElement,
+    from: number,
+    to: number,
+    durationMs: number
+  ): Promise<void> => {
+    return new Promise((resolve) => {
+      if (!audio) return resolve();
+      if (fadeRAF.current) cancelAnimationFrame(fadeRAF.current);
+      
+      // Ensure volume stays within valid range
+      const startVolume = Math.max(0, Math.min(1, from));
+      const endVolume = Math.max(0, Math.min(1, to));
+      // Capture current fade context id; if a new fade starts, cancel this one
+      const myFadeId = ++fadeContextIdRef.current;
+      
+      const start = performance.now();
+      const step = (now: number) => {
+        // Cancel if a newer fade started
+        if (myFadeId !== fadeContextIdRef.current) {
+          resolve();
+          return;
+        }
+        const elapsed = now - start;
+        let t = Math.min(1, elapsed / durationMs);
+        
+        // Calculate new volume, ensuring it stays in [0, 1] range
+        let newVolume = startVolume + (endVolume - startVolume) * t;
+        newVolume = Math.max(0, Math.min(1, newVolume));
+        
+        try {
+          audio.volume = newVolume;
+        } catch (e) {
+          console.warn('Error setting volume:', e);
+          cancelAnimationFrame(fadeRAF.current!);
+          resolve();
+          return;
+        }
+        
+        if (t < 1) {
+          fadeRAF.current = requestAnimationFrame(step);
+        } else {
+          resolve();
+        }
+      };
+      
+      // Set initial volume
+      audio.volume = startVolume;
+      fadeRAF.current = requestAnimationFrame(step);
+    });
+  }, []);
+
+  // Prefade current audio as soon as user begins a scroll gesture
+  const preFadeCurrentAudio = useCallback(async () => {
+    if (preFadeActiveRef.current) return;
+    const audio = audioRef.current;
+    if (!audio) return;
+    if (audio.paused) return;
+    preFadeActiveRef.current = true;
+    try {
+      audio.muted = false;
+      await fadeVolume(audio, audio.volume, 0, 600);
+    } catch {}
+  }, [fadeVolume]);
+
   // Set music when reel changes
   useEffect(() => {
     console.log('Music useEffect triggered', {
@@ -508,141 +589,149 @@ export default function Reels() {
     fetchMusic();
   }, [currentReel?.id, currentReel?.productId, currentReel?.hasMusic, currentReel?.music, fetchMusic]);
 
-  // Handle playback when reel changes
+  // Handle playback when reel changes with sequenced fade-out -> unload -> fade-in
   useEffect(() => {
+    // reset pre-fade guard for the new reel
+    preFadeActiveRef.current = false;
     const video = videoRef.current;
     const audio = audioRef.current;
     
+    // Bump transition id to cancel any prior transitions
+    const myTransitionId = ++transitionIdRef.current;
+    
     // Reset states for new reel
     setVideoError(false);
-    setIsPlaying(true); // Start with playing state by default for slideshows
-    
-    // Pause any ongoing playback
-    if (video) {
-      video.pause();
-      video.currentTime = 0;
-    }
-    
-    if (audio) {
-      audio.pause();
-      audio.currentTime = 0;
-    }
+    setIsPlaying(true);
     
     const onVideoError = (e: Event) => {
       console.error('Video loading error:', e);
       setVideoError(true);
     };
     
-    // Function to start audio playback
-    const startAudioPlayback = async () => {
-      if (!audio || !music?.url || pendingAutoPlay.current) return;
-      
-      pendingAutoPlay.current = true;
-      
-      try {
-        // First try to play with sound
-        audio.muted = false;
-        await audio.play();
-        setIsMuted(false);
-        console.log('Audio playback started with sound');
-      } catch (audioError) {
-        console.warn('Audio play with sound failed, trying muted:', audioError);
-        // If that fails, try with muted audio
+    const fadeOutAndStopPrevious = async () => {
+      const indexChanged = prevIndexRef.current !== currentReelIndex;
+      if (!audio) return;
+      if (indexChanged && !audio.paused && audio.volume > 0) {
         try {
-          audio.muted = true;
-          await audio.play();
+          audio.muted = false; // ensure audible fade
+          await fadeVolume(audio, audio.volume, 0, 600);
+        } catch {}
+      }
+      // Stop and reset regardless
+      audio.pause();
+      audio.currentTime = 0;
+      audio.volume = 0;
+    };
+    
+    const startAudioPlayback = async () => {
+      const a = audioRef.current;
+      if (!a || !music?.url) return;
+      if (pendingAutoPlay.current) return;
+      pendingAutoPlay.current = true;
+      try {
+        // Short delay to avoid thrash during rapid index changes
+        await new Promise(r => setTimeout(r, 150));
+        if (myTransitionId !== transitionIdRef.current) return; // cancelled by newer transition
+        a.muted = true;
+        a.volume = 0;
+        await a.play();
+        if (myTransitionId !== transitionIdRef.current) return;
+        // Attempt unmute with longer natural fade-in
+        try {
+          a.muted = false;
+          await fadeVolume(a, 0, 1, 550);
+          setIsMuted(false);
+        } catch {
+          a.muted = true;
           setIsMuted(true);
-          console.log('Audio playback started muted');
-        } catch (mutedError) {
-          console.warn('Muted audio playback also failed:', mutedError);
+        }
+      } catch (err) {
+        console.warn('Audio autoplay failed:', err);
+        try {
+          a!.muted = true;
+          await a!.play();
+          setIsMuted(true);
+        } catch (e2) {
+          console.warn('Muted autoplay also failed:', e2);
         }
       } finally {
         pendingAutoPlay.current = false;
       }
     };
     
-    // Function to handle video playback (if video exists)
     const startVideoPlayback = async () => {
-      if (!video || !currentReel?.videoUrl) return;
+      const v = videoRef.current;
+      if (!v || !currentReel?.videoUrl) return;
+      try {
+        v.muted = true;
+        await v.play();
+        v.muted = isMuted;
+        setIsPlaying(true);
+      } catch (err) {
+        console.warn('Video autoplay failed:', err);
+      }
+    };
+    
+    const run = async () => {
+      // Sequence: fade-out prev -> stop -> start next with delayed fade-in
+      await fadeOutAndStopPrevious();
+      if (myTransitionId !== transitionIdRef.current) return; // cancelled
       
-      try {
-        video.muted = true; // Start muted to comply with autoplay policies
-        await video.play();
-        video.muted = isMuted; // Restore mute state
-        setIsPlaying(true);
-      } catch (error) {
-        console.warn('Video autoplay failed:', error);
+      // Start audio if available
+      if (music?.url) {
+        await startAudioPlayback();
+      }
+      if (myTransitionId !== transitionIdRef.current) return;
+      
+      // Then handle video
+      if (currentReel?.videoUrl) {
+        await startVideoPlayback();
       }
     };
     
-    // Start both audio and video (if applicable)
-    const startPlayback = async () => {
-      try {
-        // Start audio first if available
-        if (music?.url) {
-          await startAudioPlayback();
-        }
-        
-        // Then handle video if available
-        if (currentReel?.videoUrl) {
-          await startVideoPlayback();
-        }
-        
-        // If we have both video and audio, sync them
-        const currentVideo = videoRef.current;
-        const currentAudio = audioRef.current;
-        
-        if (currentVideo && currentAudio && music?.url) {
-          currentAudio.currentTime = currentVideo.currentTime;
-          try {
-            // Try to play audio with sound
-            currentAudio.muted = false;
-            await currentAudio.play();
-            currentVideo.muted = false;
-            setIsMuted(false);
-          } catch (audioError) {
-            console.warn('Audio play with sound failed, trying muted:', audioError);
-            // Fallback to muted audio
-            currentAudio.muted = true;
-            await currentAudio.play();
-            currentVideo.muted = false;
-            setIsMuted(false);
-          }
-        }
-        
-        setIsPlaying(true);
-      } catch (error) {
-        console.warn('Playback failed:', error);
-        setIsPlaying(false);
-      } finally {
-        pendingAutoPlay.current = false;
-      }
-    };
-    
-    // Add event listeners for video (if video exists)
+    // If we have a video element, still attach listeners as backup
     if (video && currentReel?.videoUrl) {
-      video.addEventListener('canplay', startPlayback);
       video.addEventListener('error', onVideoError);
-      
-      // If video is already loaded, start playback immediately
-      if (video.readyState >= 3) { // HAVE_FUTURE_DATA or more
-        startPlayback();
+      if (video.readyState >= 3) {
+        run();
+      } else {
+        // If not ready yet, kick off once it can play some data
+        const onCanPlay = () => {
+          video.removeEventListener('canplay', onCanPlay);
+          if (myTransitionId === transitionIdRef.current) run();
+        };
+        video.addEventListener('canplay', onCanPlay);
       }
-    } else if (music?.url) {
-      // If no video but we have music, start audio playback directly
-      startAudioPlayback();
+    } else {
+      // No video, just run audio transition
+      run();
     }
     
-    // Cleanup function
     return () => {
+      if (fadeRAF.current) cancelAnimationFrame(fadeRAF.current);
+      if (fadeTimeout.current) window.clearTimeout(fadeTimeout.current);
       if (video) {
-        video.removeEventListener('canplay', startPlayback);
         video.removeEventListener('error', onVideoError);
-        video.pause();
       }
-      if (audio) audio.pause();
     };
-  }, [currentReel?.videoUrl, music?.url, isMuted]);
+  }, [currentReel?.videoUrl, music?.url, isMuted, hasUserInteracted, currentReelIndex]);
+
+  // Track last active index to avoid re-running transitions on non-changes
+  useEffect(() => {
+    prevIndexRef.current = currentReelIndex;
+  }, [currentReelIndex]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (fadeRAF.current) {
+        cancelAnimationFrame(fadeRAF.current);
+      }
+      if (fadeTimeout.current) {
+        clearTimeout(fadeTimeout.current);
+      }
+    };
+  }, []);
 
   // Handle video error and retry with different format
   const handleVideoError = (e: Event) => {
@@ -831,9 +920,12 @@ export default function Reels() {
         touchStartY.current = e.touches[0].clientY;
       }}
       onTouchMove={(e) => {
-        // Allow default behavior for scrolling but track movement
-        // Prevent scrolling of the page
+        // Track movement; if user clearly started a swipe, pre-fade current audio
         e.stopPropagation();
+        const dy = touchStartY.current - e.touches[0].clientY;
+        if (Math.abs(dy) > 10) {
+          preFadeCurrentAudio();
+        }
       }}
       onTouchEnd={(e) => {
         const touchEndY = e.changedTouches[0].clientY;
@@ -848,6 +940,14 @@ export default function Reels() {
         }
       }}
     >
+      {/* Tap to enable sound overlay */}
+      {music?.url && !hasUserInteracted && (
+        <div className="absolute inset-0 z-30 flex items-end justify-center pb-24 pointer-events-none">
+          <div className="bg-black/60 text-white text-sm px-3 py-2 rounded-full">
+            Tap to enable sound
+          </div>
+        </div>
+      )}
       {/* Instant Sliding Animation Container */}
       <motion.div
         key={currentReelIndex}
@@ -860,7 +960,7 @@ export default function Reels() {
           opacity: 1
         }}
         transition={{ 
-          duration: 0.2, 
+          duration: 0.38, 
           ease: 'easeOut' 
         }}
         className="absolute inset-0"
@@ -869,7 +969,6 @@ export default function Reels() {
       {music?.url && (
         <audio
           ref={audioRef}
-          key={`audio-${music.url}`} // Force re-render when URL changes
           src={music.url}
           loop
           muted={isMuted}
@@ -917,25 +1016,35 @@ export default function Reels() {
             
             if (!audio.paused) return;
             
-            // Try to play the audio if it's not already playing
+            // Try to play the audio (muted) if it's not already playing
+            audio.muted = true;
+            audio.volume = 0;
             const playPromise = audio.play();
             
             if (playPromise !== undefined) {
               playPromise
                 .then(() => {
-                  console.log('Audio playback started successfully');
+                  console.log('Audio playback started successfully (muted)');
+                  // Best-effort fade-in
+                  const a = audioRef.current;
+                  if (a) {
+                    (async () => {
+                      try {
+                        a.muted = false;
+                        await fadeVolume(a, 0, 1, 250);
+                        setIsMuted(false);
+                      } catch {
+                        a.muted = true;
+                        setIsMuted(true);
+                      }
+                    })();
+                  }
                 })
                 .catch(error => {
                   console.warn('Audio play() failed:', error);
-                  // Try again with user interaction
-                  const handleUserInteraction = () => {
-                    audio.play().catch(e => console.warn('Retry play() failed:', e));
-                    document.removeEventListener('click', handleUserInteraction);
-                    document.removeEventListener('touchstart', handleUserInteraction);
-                  };
-                  
-                  document.addEventListener('click', handleUserInteraction, { once: true });
-                  document.addEventListener('touchstart', handleUserInteraction, { once: true });
+                  // Fallback: try muted playback only
+                  audio.muted = true;
+                  audio.play().catch(e => console.warn('Muted retry play() failed:', e));
                 });
             }
           }}
@@ -971,8 +1080,33 @@ export default function Reels() {
       {/* Background Media */}
       <div
         className="absolute inset-0"
+        onWheel={(e) => {
+          // Desktop: begin fading out as soon as user scrolls significantly
+          if (Math.abs(e.deltaY) > 10) {
+            preFadeCurrentAudio();
+          }
+        }}
         onClick={() => {
           setShowControls(true);
+          if (!hasUserInteracted) {
+            setHasUserInteracted(true);
+            // Try to start audio/video immediately after interaction
+            try {
+              if (audioRef.current && music?.url) {
+                audioRef.current.muted = false;
+                audioRef.current.play().catch(() => {
+                  // Fallback to muted if still blocked
+                  audioRef.current!.muted = true;
+                  audioRef.current!.play().catch(() => {});
+                });
+              }
+              if (videoRef.current && currentReel?.videoUrl) {
+                // Prefer unmuted if audio is separate; browsers may still require muted
+                videoRef.current.muted = true;
+                videoRef.current.play().catch(() => {});
+              }
+            } catch {}
+          }
         }}
       >
           {hasVideo && !videoError ? (
