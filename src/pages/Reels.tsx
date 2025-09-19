@@ -499,8 +499,12 @@ export default function Reels() {
     audio: HTMLAudioElement,
     from: number,
     to: number,
-    durationMs: number
+    durationMs: number = 0
   ): Promise<void> => {
+    if (durationMs <= 0) {
+      audio.volume = to;
+      return Promise.resolve();
+    }
     return new Promise((resolve) => {
       if (!audio) return resolve();
       if (fadeRAF.current) cancelAnimationFrame(fadeRAF.current);
@@ -556,7 +560,11 @@ export default function Reels() {
     preFadeActiveRef.current = true;
     try {
       audio.muted = false;
-      await fadeVolume(audio, audio.volume, 0, 600);
+      // Faster fade to ensure audio stops before next reel loads
+      await fadeVolume(audio, audio.volume, 0, 200);
+      // Ensure audio is fully stopped after fade
+      audio.pause();
+      audio.currentTime = 0;
     } catch {}
   }, [fadeVolume]);
 
@@ -789,20 +797,42 @@ export default function Reels() {
     window.history.replaceState({}, '', newUrl);
   }, [currentReelIndex, reelStates]);
 
-  // Handle navigation between reels - Instant vertical scrolling with animations
-  const handleNextReel = () => {
+  // Handle navigation between reels with proper audio cleanup
+  const handleNextReel = async () => {
     const now = Date.now();
     if (reelStates.length === 0 || now - lastScrollTime.current < scrollCooldown) return;
     lastScrollTime.current = now;
+    
+    // Ensure any previous audio is fully stopped
+    const audio = audioRef.current;
+    if (audio) {
+      audio.pause();
+      audio.currentTime = 0;
+      audio.volume = 0;
+    }
+    
+    // Small delay to ensure clean transition
+    await new Promise(resolve => setTimeout(resolve, 50));
     
     setSlideDirection('up');
     setCurrentReelIndex((prev) => (prev + 1) % reelStates.length);
   };
 
-  const handlePrevReel = () => {
+  const handlePrevReel = async () => {
     const now = Date.now();
     if (reelStates.length === 0 || now - lastScrollTime.current < scrollCooldown) return;
     lastScrollTime.current = now;
+    
+    // Ensure any previous audio is fully stopped
+    const audio = audioRef.current;
+    if (audio) {
+      audio.pause();
+      audio.currentTime = 0;
+      audio.volume = 0;
+    }
+    
+    // Small delay to ensure clean transition
+    await new Promise(resolve => setTimeout(resolve, 50));
     
     setSlideDirection('down');
     setCurrentReelIndex((prev) => (prev - 1 + reelStates.length) % reelStates.length);
@@ -916,14 +946,22 @@ export default function Reels() {
     <div 
       ref={containerRef}
       className="fixed inset-0 h-screen w-screen bg-black overflow-hidden"
+      style={{
+        overscrollBehaviorY: 'none',
+        WebkitOverflowScrolling: 'auto',
+        touchAction: 'none',
+      } as React.CSSProperties}
       onTouchStart={(e) => {
         touchStartY.current = e.touches[0].clientY;
       }}
       onTouchMove={(e) => {
-        // Track movement; if user clearly started a swipe, pre-fade current audio
-        e.stopPropagation();
+        // Track movement; if user clearly started a swipe, start fading audio
         const dy = touchStartY.current - e.touches[0].clientY;
         if (Math.abs(dy) > 10) {
+          e.stopPropagation();
+          // Prevent native scrolling behaviors like pull-to-refresh and rubber-banding
+          e.preventDefault();
+          // Start fading audio smoothly during scroll
           preFadeCurrentAudio();
         }
       }}
@@ -964,6 +1002,7 @@ export default function Reels() {
           ease: 'easeOut' 
         }}
         className="absolute inset-0"
+        style={{ willChange: 'transform', transform: 'translateZ(0)' }}
       >
           {/* Audio Element for Music */}
       {music?.url && (
@@ -1081,9 +1120,19 @@ export default function Reels() {
       <div
         className="absolute inset-0"
         onWheel={(e) => {
-          // Desktop: begin fading out as soon as user scrolls significantly
+          // Desktop: start fading audio on scroll
           if (Math.abs(e.deltaY) > 10) {
             preFadeCurrentAudio();
+            // Prevent default to avoid page scroll
+            e.preventDefault();
+            // Handle the scroll after a small delay
+            setTimeout(() => {
+              if (e.deltaY > 0) {
+                handleNextReel();
+              } else {
+                handlePrevReel();
+              }
+            }, 50);
           }
         }}
         onClick={() => {
@@ -1470,7 +1519,7 @@ export default function Reels() {
               </div>
               
               {/* Product Content */}
-              <div className="flex-1 overflow-y-auto p-4">
+              <div className="flex-1 overflow-y-auto p-4" style={{ touchAction: 'auto' }}>
                 <div className="space-y-6">
                   {/* Product Image */}
                   <div className="aspect-square rounded-lg overflow-hidden">
