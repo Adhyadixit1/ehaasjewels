@@ -15,6 +15,22 @@ export interface ProductData {
   featured: boolean;
   isActive: boolean;
   shortDescription?: string;
+  has_music?: boolean;
+  music_url?: string;
+  music?: {
+    url: string;
+    title?: string;
+    artist?: string;
+  };
+  product_images?: Array<{
+    id: string;
+    image_url: string;
+    is_primary: boolean;
+    media_type: string;
+  }>;
+  categories?: {
+    name: string;
+  };
 }
 
 export interface ProductImage {
@@ -462,54 +478,121 @@ export class ProductService {
   /**
    * Get products with optimized single query
    */
-  static async getProducts(page = 1, limit = 20) {
+  static async getProducts(page = 1, limit = 20): Promise<{
+    products: ProductData[];
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
+  }> {
     try {
       const offset = (page - 1) * limit;
       
-      // Single query with count and data
+      // First, check if the music-related columns exist in the database
+      const { data: tableInfo } = await supabase
+        .rpc('get_table_columns', { table_name: 'products' });
+        
+      const hasMusicColumns = tableInfo && Array.isArray(tableInfo) && 
+        tableInfo.some((col: any) => ['has_music', 'music_url', 'music_audio_url'].includes(col.column_name));
+      
+      // Include music-related fields in the select if they exist
+      const selectFields = `
+        *,
+        categories (name),
+        product_images (id, image_url, is_primary, media_type)
+        ${hasMusicColumns ? ', has_music, music_url, music_audio_url, music_title, music_artist' : ''}
+      `;
+      
+      // First, try to get active products with basic data
       const { data, error, count } = await supabase
         .from('products')
-        .select(`
-          *,
-          categories (name),
-          product_images (id, image_url, is_primary, media_type)
-        `, { count: 'exact' })
+        .select(selectFields, { count: 'exact' })
         .eq('is_active', true)
         .order('created_at', { ascending: false })
         .range(offset, offset + limit - 1);
 
       if (error) {
+        console.error('Error fetching products:', error);
         throw new Error(`Failed to fetch products: ${error.message}`);
       }
 
-      // If no active products found, retry without active filter to avoid empty feeds (fallback)
-      if ((data || []).length === 0) {
+      // Process the data
+      let processedData: ProductData[] = [];
+      if (data && data.length > 0) {
+        processedData = data.map(product => {
+          // Check if the product has music data
+          const hasMusic = Boolean(
+            product.has_music === true || 
+            product.music_url || 
+            product.music_audio_url
+          );
+          
+          // Get music URL from various possible fields
+          const musicUrl = product.music_url || product.music_audio_url || null;
+          
+          return {
+            ...product,
+            has_music: hasMusic,
+            music_url: musicUrl,
+            music: hasMusic ? {
+              url: musicUrl,
+              title: product.music_title || 'Background Music',
+              artist: product.music_artist || 'Ehsaas Jewels'
+            } : undefined
+          };
+        });
+      }
+
+      // If no active products found, try without the is_active filter
+      if (processedData.length === 0) {
         console.warn('No active products found. Retrying without is_active filter to populate feeds.');
         const { data: fallbackData, error: fallbackError, count: fallbackCount } = await supabase
           .from('products')
-          .select(`
-            *,
-            categories (name),
-            product_images (id, image_url, is_primary, media_type)
-          `, { count: 'exact' })
+          .select(selectFields, { count: 'exact' })
           .order('created_at', { ascending: false })
           .range(offset, offset + limit - 1);
 
         if (fallbackError) {
-          throw new Error(`Failed to fetch products: ${fallbackError.message}`);
+          console.error('Error fetching fallback products:', fallbackError);
+          throw new Error(`Failed to fetch fallback products: ${fallbackError.message}`);
         }
 
-        return {
-          products: fallbackData || [],
-          total: fallbackCount || 0,
-          page,
-          limit,
-          totalPages: Math.ceil((fallbackCount || 0) / limit)
-        };
+        if (fallbackData && fallbackData.length > 0) {
+          processedData = fallbackData.map(product => {
+            // Check if the product has music data
+            const hasMusic = Boolean(
+              product.has_music === true || 
+              product.music_url || 
+              product.music_audio_url
+            );
+            
+            // Get music URL from various possible fields
+            const musicUrl = product.music_url || product.music_audio_url || null;
+            
+            return {
+              ...product,
+              has_music: hasMusic,
+              music_url: musicUrl,
+              music: hasMusic ? {
+                url: musicUrl,
+                title: product.music_title || 'Background Music',
+                artist: product.music_artist || 'Ehsaas Jewels'
+              } : undefined
+            };
+          });
+          
+          return {
+            products: processedData,
+            total: fallbackCount || 0,
+            page,
+            limit,
+            totalPages: Math.ceil((fallbackCount || 0) / limit)
+          };
+        }
       }
 
       return {
-        products: data || [],
+        products: processedData,
         total: count || 0,
         page,
         limit,
@@ -524,9 +607,30 @@ export class ProductService {
   /**
    * Get products by category with optimized query
    */
-  static async getProductsByCategory(categoryId: number, page = 1, limit = 20) {
+  static async getProductsByCategory(categoryId: number, page = 1, limit = 20): Promise<{
+    products: ProductData[];
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
+  }> {
     try {
       const offset = (page - 1) * limit;
+      
+      // First, check if the music-related columns exist in the database
+      const { data: tableInfo } = await supabase
+        .rpc('get_table_columns', { table_name: 'products' });
+        
+      const hasMusicColumns = tableInfo && Array.isArray(tableInfo) && 
+        tableInfo.some((col: any) => ['has_music', 'music_url', 'music_audio_url'].includes(col.column_name));
+      
+      // Include music-related fields in the select if they exist
+      const selectFields = `
+        *,
+        categories (name),
+        product_images (id, image_url, is_primary, media_type)
+        ${hasMusicColumns ? ', has_music, music_url, music_audio_url, music_title, music_artist' : ''}
+      `;
       
       // First get the count
       let { count: totalCount, error: countError } = await supabase
@@ -539,25 +643,50 @@ export class ProductService {
         console.warn('Failed to get total count:', countError.message);
       }
 
-      // Then get the data with joins
+      // Get the data with joins
       let { data, error } = await supabase
         .from('products')
-        .select(`
-          *,
-          categories (name),
-          product_images (id, image_url, is_primary, media_type)
-        `)
+        .select(selectFields)
         .eq('is_active', true)
         .eq('category_id', categoryId)
         .order('created_at', { ascending: false })
         .range(offset, offset + limit - 1);
 
       if (error) {
+        console.error('Error fetching products by category:', error);
         throw new Error(`Failed to fetch products by category: ${error.message}`);
       }
 
+      // Process the data
+      const processProductData = (products: any[]): ProductData[] => {
+        return (products || []).map(product => {
+          // Check if the product has music data
+          const hasMusic = Boolean(
+            product.has_music === true || 
+            product.music_url || 
+            product.music_audio_url
+          );
+          
+          // Get music URL from various possible fields
+          const musicUrl = product.music_url || product.music_audio_url || null;
+          
+          return {
+            ...product,
+            has_music: hasMusic,
+            music_url: musicUrl,
+            music: hasMusic ? {
+              url: musicUrl,
+              title: product.music_title || 'Background Music',
+              artist: product.music_artist || 'Ehsaas Jewels'
+            } : undefined
+          };
+        });
+      };
+
+      let processedData = processProductData(data);
+
       // Fallback without is_active filter if needed
-      if ((data || []).length === 0) {
+      if (processedData.length === 0) {
         console.warn('No active products for category. Retrying without is_active filter.');
         const retryCountResp = await supabase
           .from('products')
@@ -567,21 +696,28 @@ export class ProductService {
 
         const retryDataResp = await supabase
           .from('products')
-          .select(`
-            *,
-            categories (name),
-            product_images (id, image_url, is_primary, media_type)
-          `)
+          .select(selectFields)
           .eq('category_id', categoryId)
           .order('created_at', { ascending: false })
           .range(offset, offset + limit - 1);
+          
         if (!retryDataResp.error) {
-          data = retryDataResp.data || [];
+          // Process the fallback data
+          const fallbackData = retryDataResp.data || [];
+          processedData = processProductData(fallbackData);
+          
+          return {
+            products: processedData,
+            total: totalCount || 0,
+            page,
+            limit,
+            totalPages: Math.ceil((totalCount || 0) / limit)
+          };
         }
       }
 
       return {
-        products: data || [],
+        products: processedData,
         total: totalCount || 0,
         page,
         limit,

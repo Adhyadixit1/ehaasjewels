@@ -1,6 +1,29 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
+import { supabase } from '@/integrations/supabase/client';
+
+// Helper functions for audio state logging
+const getNetworkState = (state: number): string => {
+  const states = [
+    'NETWORK_EMPTY',      // 0
+    'NETWORK_IDLE',       // 1
+    'NETWORK_LOADING',    // 2
+    'NETWORK_NO_SOURCE'   // 3
+  ];
+  return states[state] || `UNKNOWN_NETWORK_STATE_${state}`;
+};
+
+const getReadyState = (state: number): string => {
+  const states = [
+    'HAVE_NOTHING',       // 0
+    'HAVE_METADATA',      // 1
+    'HAVE_CURRENT_DATA',  // 2
+    'HAVE_FUTURE_DATA',   // 3
+    'HAVE_ENOUGH_DATA'    // 4
+  ];
+  return states[state] || `UNKNOWN_READY_STATE_${state}`;
+};
 import { 
   ArrowLeft, 
   Heart, 
@@ -39,13 +62,34 @@ interface Reel {
   isLiked: boolean;
   timestamp: string;
   primaryProductId: string;
-  products: {
+  productId?: number; // Add productId for music fetching
+  hasMusic?: boolean; // Flag to indicate if this reel has music
+  music_url?: string;
+  music_audio_url?: string;
+  music_title?: string;
+  music_artist?: string;
+  music?: {
+    url: string;
+    title?: string;
+    artist?: string;
+  };
+  products: Array<{
     id: string;
     name: string;
     price: number;
     originalPrice?: number;
     image: string;
-  }[];
+    has_music?: boolean;
+    music_url?: string;
+    music_audio_url?: string;
+    music_title?: string;
+    music_artist?: string;
+    music?: {
+      url: string;
+      title?: string;
+      artist?: string;
+    };
+  }>;
 }
 
 // Helper function to get product image
@@ -132,6 +176,61 @@ const generateReelsFromProducts = (products: any[]) => {
       }
     }
 
+    // Debug log for product being processed - log the entire product for inspection
+    console.log(`Processing product ${product.id} - ${product.name}`, {
+      has_music: product.has_music,
+      music_url: product.music_url,
+      music: product.music,
+      music_title: product.music_title,
+      music_artist: product.music_artist,
+      // Log all product properties to help with debugging
+      allProductProperties: Object.keys(product)
+    });
+    
+    // Check if product has music - check multiple possible fields
+    // Also check for any music-related fields directly on the product
+    const hasMusic = !!(
+      product.has_music === true || 
+      product.music_url || 
+      (product.music && product.music.url) ||
+      product.audio_url ||
+      product.music_audio_url
+    );
+    
+    // Get music data from various possible locations in the product
+    const musicData = product.music || {};
+    const musicUrl = (
+      product.music_url || 
+      musicData.url || 
+      product.audio_url || 
+      product.music_audio_url ||
+      null
+    );
+    
+    const musicTitle = (
+      product.music_title || 
+      musicData.title || 
+      'Background Music'
+    );
+      
+    const musicArtist = (
+      product.music_artist || 
+      musicData.artist || 
+      'Ehsaas Jewels'
+    );
+    
+    console.log(`Music data for product ${product.id}:`, {
+      hasMusic,
+      musicUrl,
+      musicTitle,
+      musicArtist,
+      musicData,
+      // Log the final values being used
+      finalMusicUrl: musicUrl,
+      finalMusicTitle: musicTitle,
+      finalMusicArtist: musicArtist
+    });
+    
     return {
       id: `fr${product.id}`,
       videoUrl: videoUrl,
@@ -145,6 +244,13 @@ const generateReelsFromProducts = (products: any[]) => {
       isLiked: false, // Always start unliked for new profiles
       timestamp: `${Math.floor(Math.random() * 24) + 1} hours ago`,
       primaryProductId: product.id.toString(),
+      productId: product.id, // Add productId for music fetching
+      hasMusic, // Set the hasMusic flag
+      music: hasMusic && musicUrl ? {
+        url: musicUrl,
+        title: musicTitle,
+        artist: musicArtist
+      } : undefined,
       products: [{
         id: product.id.toString(),
         name: product.name,
@@ -163,7 +269,15 @@ export default function Reels() {
   const pendingAutoPlay = useRef(false);
   const [currentReelIndex, setCurrentReelIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(true);
-  const [isMuted, setIsMuted] = useState(true); // Add muted state
+  const [isMuted, setIsMuted] = useState(false); // Start unmuted to allow audio playback
+  const [music, setMusic] = useState<{
+    url: string;
+    title?: string;
+    artist?: string;
+    startAt?: number;
+    endAt?: number | null;
+  } | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
   const [showProducts, setShowProducts] = useState(false);
   const [reelStates, setReelStates] = useState<Reel[]>([]);
   const [expandedDescription, setExpandedDescription] = useState(false);
@@ -171,6 +285,8 @@ export default function Reels() {
   const [videoError, setVideoError] = useState(false); // Add video error state
   // Slideshow state for non-video reels
   const [slideIndex, setSlideIndex] = useState(0);
+  // Controls visibility (play/pause and volume) — hidden until tapped
+  const [showControls, setShowControls] = useState(false);
   const lastScrollTime = useRef<number>(0);
   const scrollCooldown = 500;
   const touchStartY = useRef<number>(0);
@@ -196,7 +312,22 @@ export default function Reels() {
   // Generate reels when products are loaded
   useEffect(() => {
     if (products.length > 0) {
+      console.log('Products loaded, generating reels:', products);
       const generatedReels = generateReelsFromProducts(products);
+      
+      // Log product 52's data for debugging
+      const product52 = products.find(p => p.id === 52);
+      if (product52) {
+        console.log('Product 52 data:', {
+          id: product52.id,
+          name: product52.name,
+          has_music: product52.has_music,
+          music_url: product52.music_url,
+          music: product52.music,
+          product_images: product52.product_images
+        });
+      }
+      
       setReelStates(generatedReels);
 
       // If a deep link is present (?reel=<id>), open that exact reel
@@ -227,85 +358,334 @@ export default function Reels() {
     return () => clearInterval(interval);
   }, [hasVideo, videoError, gallerySlides]);
 
-  // Handle video playback when reel changes (defer autoplay until canplay)
+  // Auto-hide controls after a short delay once shown
+  useEffect(() => {
+    if (!showControls) return;
+    const t = setTimeout(() => setShowControls(false), 2500);
+    return () => clearTimeout(t);
+  }, [showControls]);
+
+  // Fetch music for the current reel
+  const fetchMusic = useCallback(async () => {
+    if (!currentReel) {
+      console.log('No current reel');
+      return;
+    }
+
+    console.log('Fetching music for reel (Supabase):', {
+      reelId: currentReel.id,
+      productId: currentReel.productId || currentReel.primaryProductId,
+      hasMusic: currentReel.hasMusic
+    });
+
+    try {
+      // First, check if we have a product ID to fetch music for
+      const productIdRaw = currentReel.productId ?? currentReel.primaryProductId;
+      if (productIdRaw === undefined || productIdRaw === null) {
+        console.log('No product ID found for reel:', currentReel.id);
+        setMusic(null);
+        return;
+      }
+      const productId = typeof productIdRaw === 'string' ? Number(productIdRaw) : productIdRaw;
+      if (Number.isNaN(productId)) {
+        console.warn('Product ID is not a valid number:', productIdRaw);
+        setMusic(null);
+        return;
+      }
+
+      // Query Supabase product_music table directly
+      console.log('Querying Supabase for music with productId:', productId, 'type:', typeof productId);
+      
+      // First, check if the table exists and is accessible
+      try {
+        const { data: tableInfo, error: tableError } = await supabase
+          .rpc('get_table_info', { table_name: 'product_music' })
+          .single();
+          
+        console.log('Table info:', tableInfo);
+      } catch (tableCheckError) {
+        console.warn('Could not fetch table info (this is normal if RLS is enabled):', tableCheckError);
+      }
+      
+      // Now try the actual query
+      const query = supabase
+        .from('product_music')
+        .select('audio_url,title,artist,start_at_seconds,end_at_seconds')
+        .eq('product_id', productId)
+        .eq('is_active', true)
+        .order('priority', { ascending: true })
+        .limit(1);
+        
+      console.log('Executing Supabase query:', {
+        table: 'product_music',
+        select: 'audio_url,title,artist,start_at_seconds,end_at_seconds',
+        filters: {
+          product_id: { value: productId, type: typeof productId },
+          is_active: true
+        },
+        order: 'priority (asc)',
+        limit: 1
+      });
+      
+      const { data, error, status, statusText } = await query;
+      
+      console.log('Supabase response:', {
+        status,
+        statusText,
+        data,
+        error,
+        hasData: !!data,
+        isArray: Array.isArray(data),
+        dataLength: Array.isArray(data) ? data.length : 'not an array',
+        hasAudioUrl: Array.isArray(data) && data.length > 0 ? 'audio_url' in data[0] : 'no data'
+      });
+
+      if (error) {
+        console.error('Supabase product_music query error:', {
+          message: error.message,
+          code: error.code,
+          details: error.details,
+          hint: error.hint,
+          status: error.status
+        });
+        setMusic(null);
+        return;
+      }
+
+      const row = Array.isArray(data) && data.length > 0 ? data[0] : null;
+      console.log('Processed row:', row);
+      
+      if (!row || !row.audio_url) {
+        console.log('No active music rows found for product:', productId, {
+          rowExists: !!row,
+          hasAudioUrl: row ? 'audio_url' in row : false,
+          rowKeys: row ? Object.keys(row) : 'no row'
+        });
+        setMusic(null);
+        return;
+      }
+
+      setMusic({
+        url: row.audio_url,
+        title: row.title || 'Background Music',
+        artist: row.artist || 'Ehsaas Jewels',
+        startAt: row.start_at_seconds || 0,
+        endAt: row.end_at_seconds ?? null,
+      });
+      
+    } catch (error) {
+      console.error('Error in fetchMusic:', error);
+      setMusic(null);
+    }
+  }, [currentReel]);
+
+  // Set music when reel changes
+  useEffect(() => {
+    console.log('Music useEffect triggered', {
+      currentReelId: currentReel?.id,
+      hasMusic: currentReel?.hasMusic,
+      productId: currentReel?.productId,
+      musicData: currentReel?.music
+    });
+
+    // If the current reel already has music data, use it directly
+    if (currentReel?.music?.url) {
+      console.log('Using music from reel data:', {
+        reelId: currentReel.id,
+        musicUrl: currentReel.music.url,
+        title: currentReel.music.title,
+        artist: currentReel.music.artist
+      });
+      setMusic({
+        url: currentReel.music.url,
+        title: currentReel.music.title || 'Background Music',
+        artist: currentReel.music.artist || 'Ehsaas Jewels'
+      });
+      return;
+    }
+
+    // Otherwise, try to fetch the music
+    fetchMusic();
+  }, [currentReel?.id, currentReel?.productId, currentReel?.hasMusic, currentReel?.music, fetchMusic]);
+
+  // Handle playback when reel changes
   useEffect(() => {
     const video = videoRef.current;
-    if (!video || !currentReel?.videoUrl) return;
-
-    // Reset video error state for new reel
+    const audio = audioRef.current;
+    
+    // Reset states for new reel
     setVideoError(false);
-
-    // Prepare video for stable autoplay
-    video.pause();
-    setIsPlaying(false);
-    video.currentTime = 0;
-    video.muted = true;
-    setIsMuted(true);
-
-    const onCanPlay = () => {
-      // Avoid duplicate play() calls
-      if (pendingAutoPlay.current) return;
-      pendingAutoPlay.current = true;
-      
-      video.play().then(() => {
-        setIsPlaying(true);
-        console.log('Video playing successfully');
-      }).catch((error) => {
-        console.warn('Autoplay blocked, will play on user interaction:', error);
-        // Autoplay may be blocked; keep paused state
-        setIsPlaying(false);
-      }).finally(() => {
-        // Allow future autoplay attempts on next reel change
-        pendingAutoPlay.current = false;
-      });
-    };
-
-    const onError = (e: Event) => {
+    setIsPlaying(true); // Start with playing state by default for slideshows
+    
+    // Pause any ongoing playback
+    if (video) {
+      video.pause();
+      video.currentTime = 0;
+    }
+    
+    if (audio) {
+      audio.pause();
+      audio.currentTime = 0;
+    }
+    
+    const onVideoError = (e: Event) => {
       console.error('Video loading error:', e);
       setVideoError(true);
-      // Try to reload the video with a different approach
-      setTimeout(() => {
-        if (video) {
-          const src = video.currentSrc || video.src;
-          if (src) {
-            video.pause();
-            // Try with different format or parameters
-            const newSrc = src.includes('.mp4') ? 
-              src.replace('.mp4', '.mov') : 
-              `${src}.mp4`;
-            video.src = newSrc;
-            video.load();
+    };
+    
+    // Function to start audio playback
+    const startAudioPlayback = async () => {
+      if (!audio || !music?.url || pendingAutoPlay.current) return;
+      
+      pendingAutoPlay.current = true;
+      
+      try {
+        // First try to play with sound
+        audio.muted = false;
+        await audio.play();
+        setIsMuted(false);
+        console.log('Audio playback started with sound');
+      } catch (audioError) {
+        console.warn('Audio play with sound failed, trying muted:', audioError);
+        // If that fails, try with muted audio
+        try {
+          audio.muted = true;
+          await audio.play();
+          setIsMuted(true);
+          console.log('Audio playback started muted');
+        } catch (mutedError) {
+          console.warn('Muted audio playback also failed:', mutedError);
+        }
+      } finally {
+        pendingAutoPlay.current = false;
+      }
+    };
+    
+    // Function to handle video playback (if video exists)
+    const startVideoPlayback = async () => {
+      if (!video || !currentReel?.videoUrl) return;
+      
+      try {
+        video.muted = true; // Start muted to comply with autoplay policies
+        await video.play();
+        video.muted = isMuted; // Restore mute state
+        setIsPlaying(true);
+      } catch (error) {
+        console.warn('Video autoplay failed:', error);
+      }
+    };
+    
+    // Start both audio and video (if applicable)
+    const startPlayback = async () => {
+      try {
+        // Start audio first if available
+        if (music?.url) {
+          await startAudioPlayback();
+        }
+        
+        // Then handle video if available
+        if (currentReel?.videoUrl) {
+          await startVideoPlayback();
+        }
+        
+        // If we have both video and audio, sync them
+        const currentVideo = videoRef.current;
+        const currentAudio = audioRef.current;
+        
+        if (currentVideo && currentAudio && music?.url) {
+          currentAudio.currentTime = currentVideo.currentTime;
+          try {
+            // Try to play audio with sound
+            currentAudio.muted = false;
+            await currentAudio.play();
+            currentVideo.muted = false;
+            setIsMuted(false);
+          } catch (audioError) {
+            console.warn('Audio play with sound failed, trying muted:', audioError);
+            // Fallback to muted audio
+            currentAudio.muted = true;
+            await currentAudio.play();
+            currentVideo.muted = false;
+            setIsMuted(false);
           }
         }
-      }, 1000);
+        
+        setIsPlaying(true);
+      } catch (error) {
+        console.warn('Playback failed:', error);
+        setIsPlaying(false);
+      } finally {
+        pendingAutoPlay.current = false;
+      }
     };
-
-    video.addEventListener('canplay', onCanPlay, { once: true });
-    video.addEventListener('error', onError, { once: true });
-
+    
+    // Add event listeners for video (if video exists)
+    if (video && currentReel?.videoUrl) {
+      video.addEventListener('canplay', startPlayback);
+      video.addEventListener('error', onVideoError);
+      
+      // If video is already loaded, start playback immediately
+      if (video.readyState >= 3) { // HAVE_FUTURE_DATA or more
+        startPlayback();
+      }
+    } else if (music?.url) {
+      // If no video but we have music, start audio playback directly
+      startAudioPlayback();
+    }
+    
+    // Cleanup function
     return () => {
-      video.removeEventListener('canplay', onCanPlay);
-      video.removeEventListener('error', onError);
-      video.pause();
+      if (video) {
+        video.removeEventListener('canplay', startPlayback);
+        video.removeEventListener('error', onVideoError);
+        video.pause();
+      }
+      if (audio) audio.pause();
     };
-  }, [currentReelIndex, currentReel?.videoUrl]);
+  }, [currentReel?.videoUrl, music?.url, isMuted]);
+
+  // Handle video error and retry with different format
+  const handleVideoError = (e: Event) => {
+    console.error('Video loading error:', e);
+    const video = videoRef.current;
+    if (!video) return;
+    
+    setVideoError(true);
+    
+    // Try to reload the video with a different approach
+    setTimeout(() => {
+      const src = video.currentSrc || video.src;
+      if (src) {
+        video.pause();
+        // Try with different format or parameters
+        const newSrc = src.includes('.mp4') ? 
+          src.replace('.mp4', '.mov') : 
+          `${src}.mp4`;
+        video.src = newSrc;
+        video.load();
+      }
+    }, 1000);
+  };
 
   // Pause video when page/tab is hidden to reduce jank on resume
   useEffect(() => {
-    const onVisibility = () => {
+    const onVisibilityChange = () => {
       const video = videoRef.current;
       if (!video) return;
+      
       if (document.hidden) {
         video.pause();
         setIsPlaying(false);
       } else if (currentReel?.videoUrl) {
-        // Attempt resume when returning
-        video.muted = true;
-        video.play().then(() => setIsPlaying(true)).catch(() => {});
+        // Attempt to resume playback when tab becomes visible again
+        video.play().catch(console.error);
       }
     };
-    document.addEventListener('visibilitychange', onVisibility);
-    return () => document.removeEventListener('visibilitychange', onVisibility);
+
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
   }, [currentReel?.videoUrl]);
 
   // Keep URL in sync with current reel (deep link)
@@ -340,25 +720,60 @@ export default function Reels() {
   };
 
   const togglePlay = () => {
-    if (currentReel?.videoUrl && videoRef.current) {
+    const video = videoRef.current;
+    const audio = audioRef.current;
+    
+    if (video && currentReel?.videoUrl) {
       if (isPlaying) {
-        videoRef.current.pause();
+        video.pause();
+        if (audio) audio.pause();
       } else {
-        videoRef.current.play().catch(error => {
-          console.error('Error playing video:', error);
-        });
+        video.play().catch(console.error);
+        if (audio) audio.play().catch(console.error);
       }
-      setIsPlaying(!isPlaying);
-    } else {
-      setIsPlaying(!isPlaying);
+    } else if (audio && music?.url) {
+      // For slideshows with music
+      if (audio.paused) {
+        audio.play().catch(console.error);
+      } else {
+        audio.pause();
+      }
     }
+    
+    setIsPlaying(!isPlaying);
   };
 
   const toggleMute = () => {
-    if (currentReel?.videoUrl && videoRef.current) {
-      videoRef.current.muted = !isMuted;
-      setIsMuted(!isMuted);
+    const newMutedState = !isMuted;
+    const video = videoRef.current;
+    const audio = audioRef.current;
+    
+    // Update video mute state if video exists
+    if (video && currentReel?.videoUrl) {
+      video.muted = newMutedState;
     }
+    
+    // Handle audio mute/unmute
+    if (audio && music?.url) {
+      audio.muted = newMutedState;
+      
+      // If unmuting, try to play the audio
+      if (newMutedState === false) {
+        // Sync with video time if video exists
+        if (video && currentReel?.videoUrl) {
+          audio.currentTime = video.currentTime;
+        }
+        
+        audio.play().catch(error => {
+          console.warn('Audio playback failed, trying muted:', error);
+          // Fallback to muted if needed
+          audio.muted = true;
+          audio.play().catch(console.error);
+        });
+      }
+    }
+    
+    setIsMuted(newMutedState);
   };
 
   if (loading) {
@@ -450,8 +865,116 @@ export default function Reels() {
         }}
         className="absolute inset-0"
       >
-          {/* Background Media */}
-          <div className="absolute inset-0">
+          {/* Audio Element for Music */}
+      {music?.url && (
+        <audio
+          ref={audioRef}
+          key={`audio-${music.url}`} // Force re-render when URL changes
+          src={music.url}
+          loop
+          muted={isMuted}
+          preload="auto"
+          crossOrigin="anonymous"
+          onPlay={() => console.log('Audio playback started:', music.url)}
+          onPause={() => console.log('Audio playback paused')}
+          onError={(e) => {
+            const audio = e.target as HTMLAudioElement;
+            const error = audio.error;
+            const errorInfo = {
+              // Use error code and message which are standard properties
+              errorCode: error?.code,
+              errorMessage: error?.message,
+              // Map error code to human-readable name
+              errorType: error?.code === 1 ? 'MEDIA_ERR_ABORTED' :
+                        error?.code === 2 ? 'MEDIA_ERR_NETWORK' :
+                        error?.code === 3 ? 'MEDIA_ERR_DECODE' :
+                        error?.code === 4 ? 'MEDIA_ERR_SRC_NOT_SUPPORTED' :
+                        'UNKNOWN_ERROR',
+              src: audio.src,
+              networkState: getNetworkState(audio.networkState),
+              readyState: getReadyState(audio.readyState),
+              currentTime: audio.currentTime,
+              duration: audio.duration,
+              paused: audio.paused,
+              muted: audio.muted,
+              volume: audio.volume
+            };
+            console.error('Audio playback error:', errorInfo);
+          }}
+          onCanPlayThrough={() => {
+            console.log('Audio can play through');
+            const audio = audioRef.current;
+            if (!audio) return;
+            
+            console.log('Audio element state:', {
+              readyState: getReadyState(audio.readyState),
+              networkState: getNetworkState(audio.networkState),
+              currentTime: audio.currentTime,
+              duration: audio.duration,
+              paused: audio.paused,
+              muted: audio.muted
+            });
+            
+            if (!audio.paused) return;
+            
+            // Try to play the audio if it's not already playing
+            const playPromise = audio.play();
+            
+            if (playPromise !== undefined) {
+              playPromise
+                .then(() => {
+                  console.log('Audio playback started successfully');
+                })
+                .catch(error => {
+                  console.warn('Audio play() failed:', error);
+                  // Try again with user interaction
+                  const handleUserInteraction = () => {
+                    audio.play().catch(e => console.warn('Retry play() failed:', e));
+                    document.removeEventListener('click', handleUserInteraction);
+                    document.removeEventListener('touchstart', handleUserInteraction);
+                  };
+                  
+                  document.addEventListener('click', handleUserInteraction, { once: true });
+                  document.addEventListener('touchstart', handleUserInteraction, { once: true });
+                });
+            }
+          }}
+          onLoadedMetadata={() => {
+            const audioElement = audioRef.current;
+            if (!audioElement) return;
+            
+            // Safely access audioTracks with type assertion
+            const audioTracks = 'audioTracks' in audioElement 
+              ? (audioElement as any).audioTracks?.length 
+              : 'N/A';
+              
+            console.log('Audio metadata loaded:', {
+              duration: audioElement.duration,
+              audioTracks,
+              volume: audioElement.volume,
+              muted: audioElement.muted,
+              readyState: getReadyState(audioElement.readyState),
+              networkState: getNetworkState(audioElement.networkState)
+            });
+          }}
+          onStalled={() => console.warn('Audio stalled - buffering data')}
+          onWaiting={() => console.log('Audio waiting for data')}
+          onPlaying={() => console.log('Audio playing')}
+          onEnded={() => console.log('Audio ended')}
+          onEmptied={() => console.warn('Audio emptied - media has been reset')}
+          onSuspend={() => console.log('Audio loading suspended')}
+          onAbort={() => console.warn('Audio loading aborted')}
+          className="hidden"
+        />
+      )}
+      
+      {/* Background Media */}
+      <div
+        className="absolute inset-0"
+        onClick={() => {
+          setShowControls(true);
+        }}
+      >
           {hasVideo && !videoError ? (
           <video
             ref={videoRef}
@@ -463,8 +986,21 @@ export default function Reels() {
             preload="metadata"
             disablePictureInPicture
             className="w-full h-full object-cover"
-            onPlay={() => setIsPlaying(true)}
-            onPause={() => setIsPlaying(false)}
+            onPlay={() => {
+              setIsPlaying(true);
+              // Sync audio with video when video plays
+              if (audioRef.current && !audioRef.current.paused) {
+                audioRef.current.currentTime = videoRef.current?.currentTime || 0;
+                audioRef.current.play().catch(console.error);
+              }
+            }}
+            onPause={() => {
+              setIsPlaying(false);
+              // Pause audio when video pauses
+              if (audioRef.current) {
+                audioRef.current.pause();
+              }
+            }}
             onLoadedData={() => {
               // Video loaded successfully
               if (videoRef.current && !isPlaying) {
@@ -554,13 +1090,41 @@ export default function Reels() {
         
         <h1 className="text-white font-semibold text-lg">{currentReel.title}</h1>
         
-        <Button
-          variant="ghost"
-          size="sm"
-          className="text-white hover:text-white/90"
-        >
-          <MoreHorizontal className="w-5 h-5" />
-        </Button>
+        <div className="flex items-center space-x-2">
+          {/* Mute/Unmute Button */}
+          {music && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="text-white hover:text-white/90 relative group"
+              onClick={(e) => {
+                e.stopPropagation();
+                const newMutedState = !isMuted;
+                setIsMuted(newMutedState);
+                if (videoRef.current) videoRef.current.muted = newMutedState;
+                if (audioRef.current) audioRef.current.muted = newMutedState;
+              }}
+              aria-label={isMuted ? 'Unmute' : 'Mute'}
+            >
+              {isMuted ? (
+                <VolumeX className="w-5 h-5" />
+              ) : (
+                <Volume2 className="w-5 h-5" />
+              )}
+              <span className="absolute -bottom-8 left-1/2 -translate-x-1/2 bg-black/70 text-white text-xs px-2 py-1 rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+                {isMuted ? 'Unmute' : 'Mute'}
+              </span>
+            </Button>
+          )}
+          
+          <Button
+            variant="ghost"
+            size="sm"
+            className="text-white hover:text-white/90"
+          >
+            <MoreHorizontal className="w-5 h-5" />
+          </Button>
+        </div>
       </div>
 
       {/* Left Side - View Details */}
@@ -706,39 +1270,47 @@ export default function Reels() {
         
       </div>
 
-      {/* Centered Play/Pause Controls */}
-      <div className="absolute inset-0 flex items-center justify-center z-15">
-        <div className="flex space-x-4">
-          {/* Volume Control for Videos */}
-          {hasVideo && (
+      {/* Centered Play/Pause Controls - visible only when tapped */}
+      {hasVideo && showControls && (
+        <div className="absolute inset-0 flex items-center justify-center z-15">
+          <div className="flex space-x-4">
+            {/* Volume Control for Videos and Music */}
             <Button
               variant="ghost"
               size="sm"
-              onClick={toggleMute}
-              className="text-white hover:text-white/90 bg-black/30 backdrop-blur-sm rounded-full p-3"
+              onClick={(e) => { e.stopPropagation(); toggleMute(); }}
+              className="text-white hover:text-white/90 bg-black/30 backdrop-blur-sm rounded-full p-3 relative group"
             >
               {isMuted ? (
                 <VolumeX className="w-6 h-6" />
               ) : (
                 <Volume2 className="w-6 h-6" />
               )}
+              {currentReel.music && (
+                <span className="absolute -top-2 -right-2 bg-pink-500 text-white text-[10px] rounded-full w-5 h-5 flex items-center justify-center">
+                  ♫
+                </span>
+              )}
+              <span className="absolute -bottom-8 left-1/2 transform -translate-x-1/2 bg-black/80 text-white text-xs whitespace-nowrap px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity">
+                {currentReel.music ? 'Toggle Music' : 'Toggle Sound'}
+              </span>
             </Button>
-          )}
-          
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={togglePlay}
-            className="text-white hover:text-white/90 bg-black/30 backdrop-blur-sm rounded-full p-4"
-          >
-            {isPlaying ? (
-              <Pause className="w-8 h-8" />
-            ) : (
-              <Play className="w-8 h-8" />
-            )}
-          </Button>
+            
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={(e) => { e.stopPropagation(); togglePlay(); }}
+              className="text-white hover:text-white/90 bg-black/30 backdrop-blur-sm rounded-full p-4"
+            >
+              {isPlaying ? (
+                <Pause className="w-8 h-8" />
+              ) : (
+                <Play className="w-8 h-8" />
+              )}
+            </Button>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Product Sidebar */}
       <AnimatePresence>

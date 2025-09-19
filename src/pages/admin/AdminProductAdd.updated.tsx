@@ -13,6 +13,7 @@ import { Separator } from '@/components/ui/separator';
 import { ImageUpload } from '@/components/admin/ImageUpload';
 import { useToast } from '@/hooks/use-toast';
 import { ProductService } from '@/services/ProductService';
+import AdminService from '@/services/AdminService';
 import { supabase } from '@/integrations/supabase/client';
 
 interface UploadedMedia {
@@ -72,6 +73,15 @@ interface ProductFormData {
   hasVariants: boolean;
   variantOptions: VariantOption[];
   variants: ProductVariant[];
+  // Optional music fields for reels
+  enableMusic?: boolean;
+  musicFile?: File | null;
+  musicTitle?: string;
+  musicArtist?: string;
+  musicStartAtSeconds?: number;
+  musicEndAtSeconds?: number | null;
+  musicPriority?: number;
+  musicIsActive?: boolean;
 }
 
 const categories = [
@@ -142,6 +152,16 @@ export default function AdminProductAdd() {
     hasVariants: false,
     variantOptions: [],
     variants: [] // This should be fine as it's an empty array of ProductVariant[]
+    ,
+    // Music defaults (optional)
+    enableMusic: false,
+    musicFile: null,
+    musicTitle: '',
+    musicArtist: '',
+    musicStartAtSeconds: 0,
+    musicEndAtSeconds: null,
+    musicPriority: 100,
+    musicIsActive: true
   });
 
   // Load product data if in edit mode
@@ -725,6 +745,30 @@ export default function AdminProductAdd() {
             variant: 'destructive',
           });
         }
+        
+        // Optional: Upload and save product music if provided
+        try {
+          if (formData.enableMusic && formData.musicFile) {
+            await AdminService.uploadProductMusic(
+              savedProduct.id,
+              formData.musicFile,
+              {
+                title: formData.musicTitle || undefined,
+                artist: formData.musicArtist || undefined,
+                startAtSeconds: typeof formData.musicStartAtSeconds === 'number' ? formData.musicStartAtSeconds : 0,
+                endAtSeconds: formData.musicEndAtSeconds ?? null,
+                priority: typeof formData.musicPriority === 'number' ? formData.musicPriority : 100,
+                isActive: formData.musicIsActive !== false,
+              }
+            );
+          }
+        } catch (musicError) {
+          console.error('Error uploading product music:', musicError);
+          toast({
+            title: 'Music Upload Skipped',
+            description: 'Product saved, but music could not be uploaded. You can try again later.',
+          });
+        }
       }
 
       toast({
@@ -1161,6 +1205,112 @@ export default function AdminProductAdd() {
                   existingImages={formData.images}
                   productId={isEditMode && id ? parseInt(id) : undefined}
                 />
+              </CardContent>
+            </Card>
+
+            {/* Reel Music (Optional) */}
+            <Card className="w-full max-w-full">
+              <CardHeader>
+                <CardTitle>Reel Music (Optional)</CardTitle>
+                <CardDescription>Attach a soundtrack for this product's reel. You can skip this section.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4 w-full max-w-full">
+                <div className="flex items-center space-x-2">
+                  <Checkbox
+                    id="enableMusic"
+                    checked={!!formData.enableMusic}
+                    onCheckedChange={(checked) => handleInputChange('enableMusic', !!checked)}
+                  />
+                  <Label htmlFor="enableMusic">Enable music for this product</Label>
+                </div>
+
+                {formData.enableMusic && (
+                  <div className="space-y-4">
+                    <div className="w-full">
+                      <Label htmlFor="musicFile">Upload Audio File</Label>
+                      <Input
+                        id="musicFile"
+                        type="file"
+                        accept="audio/*,video/mp4"
+                        onChange={(e) => {
+                          const file = e.currentTarget.files && e.currentTarget.files[0] ? e.currentTarget.files[0] : null;
+                          handleInputChange('musicFile', file);
+                        }}
+                      />
+                      <p className="text-xs text-muted-foreground mt-1">Accepted: audio/* (Cloudinary will store under video resources). Optional.</p>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 w-full">
+                      <div className="w-full">
+                        <Label htmlFor="musicTitle">Title</Label>
+                        <Input
+                          id="musicTitle"
+                          value={formData.musicTitle || ''}
+                          onChange={(e) => handleInputChange('musicTitle', e.target.value)}
+                          placeholder="e.g., Golden Vibes"
+                        />
+                      </div>
+                      <div className="w-full">
+                        <Label htmlFor="musicArtist">Artist</Label>
+                        <Input
+                          id="musicArtist"
+                          value={formData.musicArtist || ''}
+                          onChange={(e) => handleInputChange('musicArtist', e.target.value)}
+                          placeholder="e.g., DJ Ehsaas"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 w-full">
+                      <div className="w-full">
+                        <Label htmlFor="musicStartAtSeconds">Start at (seconds)</Label>
+                        <Input
+                          id="musicStartAtSeconds"
+                          type="number"
+                          min="0"
+                          step="1"
+                          value={formData.musicStartAtSeconds ?? 0}
+                          onChange={(e) => handleInputChange('musicStartAtSeconds', parseInt(e.target.value) || 0)}
+                        />
+                      </div>
+                      <div className="w-full">
+                        <Label htmlFor="musicEndAtSeconds">End at (seconds)</Label>
+                        <Input
+                          id="musicEndAtSeconds"
+                          type="number"
+                          min="0"
+                          step="1"
+                          value={formData.musicEndAtSeconds ?? ''}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            handleInputChange('musicEndAtSeconds', v === '' ? null : (parseInt(v) || 0));
+                          }}
+                          placeholder="Optional"
+                        />
+                      </div>
+                      <div className="w-full">
+                        <Label htmlFor="musicPriority">Priority</Label>
+                        <Input
+                          id="musicPriority"
+                          type="number"
+                          min="0"
+                          step="1"
+                          value={formData.musicPriority ?? 100}
+                          onChange={(e) => handleInputChange('musicPriority', parseInt(e.target.value) || 100)}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex items-center space-x-2">
+                      <Checkbox
+                        id="musicIsActive"
+                        checked={formData.musicIsActive !== false}
+                        onCheckedChange={(checked) => handleInputChange('musicIsActive', !!checked)}
+                      />
+                      <Label htmlFor="musicIsActive">Active</Label>
+                    </div>
+                  </div>
+                )}
               </CardContent>
             </Card>
 

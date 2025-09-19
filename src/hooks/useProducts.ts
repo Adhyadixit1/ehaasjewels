@@ -16,12 +16,23 @@ export interface Product {
   is_active: boolean;
   featured: boolean;
   category_id?: number;
+  has_music?: boolean;
+  music_url?: string;
+  music_audio_url?: string;
+  music_title?: string;
+  music_artist?: string;
+  music?: {
+    url: string;
+    title?: string;
+    artist?: string;
+  };
   categories?: {
     name: string;
   };
   product_images?: {
     image_url: string;
     is_primary: boolean;
+    media_type?: string;
   }[];
 }
 

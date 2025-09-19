@@ -147,6 +147,79 @@ class AdminService {
   }
 
   /**
+   * Upload an audio file to Cloudinary for a product's reel music and insert into product_music.
+   * This is optional — call only when admin provides an audio file.
+   */
+  static async uploadProductMusic(
+    productId: number,
+    file: File,
+    options?: {
+      title?: string;
+      artist?: string;
+      startAtSeconds?: number;
+      endAtSeconds?: number | null;
+      priority?: number;
+      isActive?: boolean;
+    }
+  ): Promise<{ id: string; audioUrl: string }> {
+    try {
+      await AdminService.verifyAdmin();
+      console.log('🎵 Uploading product music:', file.name);
+
+      const cloudinaryConfig = await AdminService.getCloudinaryConfig();
+      if (!cloudinaryConfig.cloudName) {
+        throw new Error('Cloudinary cloud name not configured. Please configure it in the admin integration settings.');
+      }
+
+      // Upload as video resourceType to support audio streaming (Cloudinary treats audio under video API)
+      const uploadResult = await uploadFileToCloudinary(file, {
+        cloudName: cloudinaryConfig.cloudName,
+        uploadPreset: cloudinaryConfig.uploadPreset,
+        folder: `products/${productId}/music`,
+        resourceType: 'video',
+        tags: ['music','audio','product_music']
+      });
+
+      if (!uploadResult.cloudinary) {
+        throw new Error('Failed to upload audio to Cloudinary');
+      }
+
+      const audioUrl = (uploadResult.cloudinary as any).secure_url || (uploadResult.cloudinary as any).url;
+      if (!audioUrl) {
+        throw new Error('Cloudinary did not return a valid audio URL');
+      }
+
+      // Insert into product_music table
+      const insertPayload: any = {
+        product_id: productId,
+        title: options?.title || null,
+        artist: options?.artist || null,
+        audio_url: audioUrl,
+        start_at_seconds: options?.startAtSeconds ?? 0,
+        end_at_seconds: options?.endAtSeconds ?? null,
+        priority: options?.priority ?? 100,
+        is_active: options?.isActive ?? true,
+      };
+
+      const { data, error } = await supabase
+        .from('product_music')
+        .insert(insertPayload)
+        .select('id')
+        .single();
+
+      if (error) {
+        throw new Error(`Failed to insert product music: ${error.message}`);
+      }
+
+      console.log('✅ Product music uploaded and saved');
+      return { id: data.id, audioUrl };
+    } catch (error) {
+      console.error('Error uploading product music:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Get comprehensive dashboard statistics
    */
   static async getDashboardStats(): Promise<AdminStats> {

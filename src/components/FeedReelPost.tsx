@@ -8,10 +8,12 @@ import {
   VolumeX, 
   Heart, 
   Send, 
-  ShoppingBag
+  ShoppingBag,
+  Music
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useWishlist } from '@/contexts/WishlistContext';
+import { supabase } from '@/integrations/supabase/client';
 
 interface ShoppableProduct {
   id: string;
@@ -19,6 +21,15 @@ interface ShoppableProduct {
   price: number;
   originalPrice?: number;
   image: string;
+}
+
+interface ProductMusic {
+  id: string;
+  title: string | null;
+  artist: string | null;
+  audio_url: string;
+  start_at_seconds: number;
+  end_at_seconds: number | null;
 }
 
 interface ReelPost {
@@ -36,6 +47,8 @@ interface ReelPost {
   products: ShoppableProduct[];
   primaryProductId: string; // The main product this reel promotes
   timestamp: string;
+  productId?: number; // Add productId to fetch music
+  hasMusic?: boolean; // Flag to indicate if this reel has music
 }
 
 interface FeedReelPostProps {
@@ -58,12 +71,17 @@ export function FeedReelPost({
   const navigate = useNavigate();
   const { isInWishlist } = useWishlist();
   const [isPlaying, setIsPlaying] = useState(false);
-  const [isMuted, setIsMuted] = useState(true);
+  const [isMuted, setIsMuted] = useState(false); // Start unmuted by default
   const [showProducts, setShowProducts] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const audioRef = useRef<HTMLAudioElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  // Controls visibility — hidden until tapped
+  const [showControls, setShowControls] = useState(false);
   // Slideshow state for image-only posts
   const [slideIndex, setSlideIndex] = useState(0);
+  const [music, setMusic] = useState<ProductMusic | null>(null);
+  const [isMusicLoading, setIsMusicLoading] = useState(false);
   const imageSlides = (post.galleryImages && post.galleryImages.length > 0)
     ? post.galleryImages
     : [post.posterImage];
@@ -85,11 +103,133 @@ export function FeedReelPost({
   };
 
   const toggleMute = () => {
+    const newMutedState = !isMuted;
     if (hasVideo && videoRef.current) {
-      videoRef.current.muted = !isMuted;
-      setIsMuted(!isMuted);
+      videoRef.current.muted = newMutedState;
     }
+    if (audioRef.current) {
+      audioRef.current.muted = newMutedState;
+      
+      // If unmuting, try to play the audio
+      if (!newMutedState && audioRef.current.paused) {
+        audioRef.current.play().catch(e => {
+          console.error('Error playing audio when unmuting:', e);
+          // If autoplay is blocked, keep it muted
+          if (e.name === 'NotAllowedError') {
+            audioRef.current!.muted = true;
+            audioRef.current!.play().catch(() => {});
+          }
+        });
+      }
+    }
+    setIsMuted(newMutedState);
   };
+
+  // Fetch product music when component mounts if this reel has music enabled
+  useEffect(() => {
+    const fetchMusic = async () => {
+      // Only fetch music if this reel has music enabled
+      if (!post.hasMusic || !post.productId) return;
+      
+      setIsMusicLoading(true);
+      try {
+        const { data, error } = await supabase
+          .from('product_music')
+          .select('*')
+          .eq('product_id', post.productId)
+          .eq('is_active', true)
+          .order('priority', { ascending: true })
+          .limit(1)
+          .single();
+        
+        if (data && !error) {
+          setMusic(data);
+        }
+      } catch (error) {
+        console.error('Error fetching product music:', error);
+      } finally {
+        setIsMusicLoading(false);
+      }
+    };
+
+    fetchMusic();
+  }, [post.productId, post.hasMusic]);
+
+  // Sync audio with video if music is available
+  useEffect(() => {
+    // Only set up audio sync if this reel has music
+    if (!post.hasMusic || !hasVideo || !videoRef.current || !audioRef.current || !music) return;
+    
+    const video = videoRef.current;
+    const audio = audioRef.current;
+    
+    // Ensure audio is ready to play
+    const handleCanPlay = () => {
+      console.log('Audio can play');
+      audio.currentTime = music.start_at_seconds || 0;
+      if (!video.paused && audio.paused) {
+        audio.play().catch(e => console.error('Error playing audio on canplay:', e));
+      }
+    };
+    
+    const handlePlay = () => {
+      console.log('Video play event');
+      if (audio.paused) {
+        audio.currentTime = music.start_at_seconds || 0;
+        audio.play().catch(e => {
+          console.error('Error playing audio:', e);
+          // If autoplay with sound fails, try muted autoplay
+          if (e.name === 'NotAllowedError') {
+            audio.muted = true;
+            audio.play().catch(() => {});
+          }
+        });
+      }
+    };
+    
+    const handlePause = () => {
+      console.log('Video pause event');
+      if (!audio.paused) {
+        audio.pause();
+      }
+    };
+    
+    const handleTimeUpdate = () => {
+      if (music.end_at_seconds && audio.currentTime >= music.end_at_seconds) {
+        audio.currentTime = music.start_at_seconds || 0;
+        audio.play().catch(e => console.error('Error looping audio:', e));
+      }
+    };
+    
+    // Set initial volume and muted state
+    audio.volume = 1.0;
+    audio.muted = isMuted;
+    
+    // Add event listeners
+    audio.addEventListener('canplay', handleCanPlay);
+    video.addEventListener('play', handlePlay);
+    video.addEventListener('pause', handlePause);
+    video.addEventListener('ended', handlePause);
+    audio.addEventListener('timeupdate', handleTimeUpdate);
+    
+    // Start playing if video is already playing
+    if (!video.paused) {
+      handlePlay();
+    }
+    
+    return () => {
+      audio.removeEventListener('canplay', handleCanPlay);
+      video.removeEventListener('play', handlePlay);
+      video.removeEventListener('pause', handlePause);
+      video.removeEventListener('ended', handlePause);
+      audio.removeEventListener('timeupdate', handleTimeUpdate);
+      
+      // Pause audio when unmounting
+      if (!audio.paused) {
+        audio.pause();
+      }
+    };
+  }, [hasVideo, music, post.hasMusic, isMuted]);
 
   // Autoplay only when the reel is in view
   useEffect(() => {
@@ -98,9 +238,22 @@ export function FeedReelPost({
     const node = containerRef.current;
     const video = videoRef.current;
 
-    // Ensure muted to allow autoplay on mobile
-    video.muted = true;
-    setIsMuted(true);
+    // Set muted based on state (default to false for unmuted)
+    video.muted = isMuted;
+    
+    // Try to autoplay with sound
+    const playPromise = video.play();
+    
+    if (playPromise !== undefined) {
+      playPromise.catch(error => {
+        // If autoplay with sound fails, try muted autoplay
+        if (error.name === 'NotAllowedError') {
+          video.muted = true;
+          video.play().catch(() => {});
+          setIsMuted(true);
+        }
+      });
+    }
 
     const observer = new IntersectionObserver(
       (entries) => {
@@ -126,6 +279,13 @@ export function FeedReelPost({
       video.pause();
     };
   }, [hasVideo]);
+
+  // Auto-hide controls after a short delay once shown
+  useEffect(() => {
+    if (!showControls) return;
+    const t = setTimeout(() => setShowControls(false), 2000);
+    return () => clearTimeout(t);
+  }, [showControls]);
 
   // Auto-advance slideshow for image-only posts. Keep it non-intrusive: no touch handlers.
   useEffect(() => {
@@ -190,9 +350,25 @@ export function FeedReelPost({
 
       {/* Video/Image Content */}
       <div className="relative aspect-[4/5] bg-black overflow-hidden w-full">
+        {/* Hidden audio element for music - only render if this reel has music */}
+        {post.hasMusic && music && hasVideo && (
+          <audio 
+            ref={audioRef} 
+            src={music.audio_url} 
+            loop={!music.end_at_seconds}
+            muted={isMuted}
+            preload="auto"
+            className="hidden"
+            crossOrigin="anonymous"
+          />
+        )}
+        
         <div
           ref={containerRef}
-          onClick={handleVideoClick}
+          onClick={(e) => {
+            setShowControls(true);
+            handleVideoClick();
+          }}
           className="relative w-full h-full cursor-pointer group"
         >
           {hasVideo ? (
@@ -204,9 +380,16 @@ export function FeedReelPost({
               loop
               muted={isMuted}
               playsInline
-              preload="metadata"
+              preload="auto"
               className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-              onPlay={() => setIsPlaying(true)}
+              onPlay={() => {
+                setIsPlaying(true);
+                // Try to unmute when video starts playing
+                if (videoRef.current && isMuted) {
+                  videoRef.current.muted = false;
+                  setIsMuted(false);
+                }
+              }}
               onPause={() => setIsPlaying(false)}
             />
           ) : (
@@ -229,64 +412,42 @@ export function FeedReelPost({
               )}
             </div>
           )}
-          
-          {/* Video Overlay */}
-          <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-black/20" />
-          
-          {/* Play/Pause Button */}
-          <div className="absolute inset-0 flex items-center justify-center">
-            {hasVideo && !isPlaying && (
-              <motion.div
-                initial={{ scale: 0.8 }}
-                animate={{ scale: 1 }}
-                className="w-16 h-16 bg-white/20 backdrop-blur-sm rounded-full flex items-center justify-center"
-              >
-                <Play className="w-8 h-8 text-white ml-1" />
-              </motion.div>
-            )}
-          </div>
-
-          {/* Volume Control */}
-          {hasVideo && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                toggleMute();
-              }}
-              className="absolute bottom-4 right-4 p-2 bg-black/30 backdrop-blur-sm rounded-full"
-            >
-              {isMuted ? (
-                <VolumeX className="w-5 h-5 text-white" />
-              ) : (
-                <Volume2 className="w-5 h-5 text-white" />
-              )}
-            </button>
-          )}
-
-          {/* Product Tags */}
-          <div className="absolute top-4 left-4 flex flex-wrap gap-2 max-w-[70%]">
-            {post.products.slice(0, 3).map((product) => (
-              <button
-                key={product.id}
-                onClick={(e) => handleProductClick(product, e)}
-                className="bg-black/50 backdrop-blur-sm text-white text-xs px-2 py-1 rounded-full hover:bg-black/70 transition-colors truncate max-w-[120px]"
-              >
-                {product.name}
-              </button>
-            ))}
-            {post.products.length > 3 && (
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setShowProducts(!showProducts);
-                }}
-                className="bg-black/50 backdrop-blur-sm text-white text-xs px-2 py-1 rounded-full hover:bg-black/70 transition-colors"
-              >
-                +{post.products.length - 3}
-              </button>
-            )}
-          </div>
         </div>
+
+        {/* Music Info - only show if this reel has music */}
+        {post.hasMusic && music && hasVideo && (
+          <div className="absolute bottom-24 left-4 right-4 flex items-center space-x-2 bg-black/50 backdrop-blur-sm text-white p-2 rounded-lg max-w-xs">
+            <Music className="h-4 w-4 flex-shrink-0" />
+            <div className="truncate">
+              <p className="text-sm font-medium truncate">{music.title || 'Untitled Track'}</p>
+              {music.artist && <p className="text-xs text-gray-300 truncate">{music.artist}</p>}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Product Tags */}
+      <div className="absolute top-4 left-4 flex flex-wrap gap-2 max-w-[70%]">
+        {post.products.slice(0, 3).map((product) => (
+          <button
+            key={product.id}
+            onClick={(e) => handleProductClick(product, e)}
+            className="bg-black/50 backdrop-blur-sm text-white text-xs px-2 py-1 rounded-full hover:bg-black/70 transition-colors truncate max-w-[120px]"
+          >
+            {product.name}
+          </button>
+        ))}
+        {post.products.length > 3 && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setShowProducts(!showProducts);
+            }}
+            className="bg-black/50 backdrop-blur-sm text-white text-xs px-2 py-1 rounded-full hover:bg-black/70 transition-colors"
+          >
+            +{post.products.length - 3}
+          </button>
+        )}
       </div>
 
       {/* Expanded Products List */}
