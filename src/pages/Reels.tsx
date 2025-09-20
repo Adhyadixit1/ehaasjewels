@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { supabase } from '@/integrations/supabase/client';
+import { AudioManager } from '@/utils/AudioManager';
 
 // Helper functions for audio state logging
 const getNetworkState = (state: number): string => {
@@ -269,7 +270,8 @@ export default function Reels() {
   const pendingAutoPlay = useRef(false);
   const [currentReelIndex, setCurrentReelIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(true);
-  const [isMuted, setIsMuted] = useState(false); // Start unmuted to allow audio playback
+  const [isMuted, setIsMuted] = useState(true);
+  const audioManagerRef = useRef<AudioManager | null>(null); // Start unmuted to allow audio playback
   const [music, setMusic] = useState<{
     url: string;
     title?: string;
@@ -618,50 +620,33 @@ export default function Reels() {
     
     const fadeOutAndStopPrevious = async () => {
       const indexChanged = prevIndexRef.current !== currentReelIndex;
-      if (!audio) return;
-      if (indexChanged && !audio.paused && audio.volume > 0) {
-        try {
-          audio.muted = false; // ensure audible fade
-          await fadeVolume(audio, audio.volume, 0, 600);
-        } catch {}
+      if (!indexChanged || !audioManagerRef.current) return;
+      
+      try {
+        // Stop with fade out
+        await audioManagerRef.current.stop(true);
+      } catch (error) {
+        console.warn('Error stopping previous audio:', error);
       }
-      // Stop and reset regardless
-      audio.pause();
-      audio.currentTime = 0;
-      audio.volume = 0;
     };
     
     const startAudioPlayback = async () => {
-      const a = audioRef.current;
-      if (!a || !music?.url) return;
+      if (!music?.url || !audioManagerRef.current) return;
       if (pendingAutoPlay.current) return;
       pendingAutoPlay.current = true;
+      
       try {
         // Short delay to avoid thrash during rapid index changes
-        await new Promise(r => setTimeout(r, 150));
-        if (myTransitionId !== transitionIdRef.current) return; // cancelled by newer transition
-        a.muted = true;
-        a.volume = 0;
-        await a.play();
+        await new Promise(r => setTimeout(r, 50));
         if (myTransitionId !== transitionIdRef.current) return;
-        // Attempt unmute with longer natural fade-in
-        try {
-          a.muted = false;
-          await fadeVolume(a, 0, 1, 550);
-          setIsMuted(false);
-        } catch {
-          a.muted = true;
-          setIsMuted(true);
-        }
+        
+        // Start playback with fade in
+        await audioManagerRef.current.play(music.url, { fadeIn: true });
+        await audioManagerRef.current.setMuted(isMuted);
+        
+        if (myTransitionId !== transitionIdRef.current) return;
       } catch (err) {
-        console.warn('Audio autoplay failed:', err);
-        try {
-          a!.muted = true;
-          await a!.play();
-          setIsMuted(true);
-        } catch (e2) {
-          console.warn('Muted autoplay also failed:', e2);
-        }
+        console.warn('Audio playback failed:', err);
       } finally {
         pendingAutoPlay.current = false;
       }
@@ -670,14 +655,31 @@ export default function Reels() {
     const startVideoPlayback = async () => {
       const v = videoRef.current;
       if (!v || !currentReel?.videoUrl) return;
-      try {
-        v.muted = true;
-        await v.play();
-        v.muted = isMuted;
-        setIsPlaying(true);
-      } catch (err) {
-        console.warn('Video autoplay failed:', err);
+      
+      if (v.readyState < 3) {
+        // Wait for video to have enough data to play
+        await new Promise<void>((resolve) => {
+          const onCanPlay = () => {
+            v.removeEventListener('canplay', onCanPlay);
+            resolve();
+          };
+          v.addEventListener('canplay', onCanPlay, { once: true });
+        });
       }
+      
+      // Ensure video is muted for autoplay and set volume to 0 (we only want audio from audio element)
+      v.muted = true;
+      v.volume = 0;
+      
+      try {
+        await v.play();
+        console.log('Video playback started');
+      } catch (err) {
+        console.warn('Video autoplay failed, trying with muted:', err);
+        // Try again with muted if first attempt fails
+        try { v.muted = true; await v.play(); } catch (e2) {}
+      }
+      setIsPlaying(true);
     };
     
     const run = async () => {
@@ -722,7 +724,7 @@ export default function Reels() {
         video.removeEventListener('error', onVideoError);
       }
     };
-  }, [currentReel?.videoUrl, music?.url, isMuted, hasUserInteracted, currentReelIndex]);
+  }, [currentReel?.videoUrl, music?.url, hasUserInteracted, currentReelIndex]);
 
   // Track last active index to avoid re-running transitions on non-changes
   useEffect(() => {
@@ -803,13 +805,12 @@ export default function Reels() {
     if (reelStates.length === 0 || now - lastScrollTime.current < scrollCooldown) return;
     lastScrollTime.current = now;
     
-    // Ensure any previous audio is fully stopped
-    const audio = audioRef.current;
-    if (audio) {
-      audio.pause();
-      audio.currentTime = 0;
-      audio.volume = 0;
-    }
+    // Strongly stop and unload any playing media to avoid bleed-over
+    strongStopAllMedia();
+    // Clear current music reference to avoid playing during transition
+    setMusic(null);
+    // Cancel any in-flight transitions
+    transitionIdRef.current++;
     
     // Small delay to ensure clean transition
     await new Promise(resolve => setTimeout(resolve, 50));
@@ -823,13 +824,12 @@ export default function Reels() {
     if (reelStates.length === 0 || now - lastScrollTime.current < scrollCooldown) return;
     lastScrollTime.current = now;
     
-    // Ensure any previous audio is fully stopped
-    const audio = audioRef.current;
-    if (audio) {
-      audio.pause();
-      audio.currentTime = 0;
-      audio.volume = 0;
-    }
+    // Strongly stop and unload any playing media to avoid bleed-over
+    strongStopAllMedia();
+    // Clear current music reference to avoid playing during transition
+    setMusic(null);
+    // Cancel any in-flight transitions
+    transitionIdRef.current++;
     
     // Small delay to ensure clean transition
     await new Promise(resolve => setTimeout(resolve, 50));
@@ -862,38 +862,41 @@ export default function Reels() {
     setIsPlaying(!isPlaying);
   };
 
-  const toggleMute = () => {
+  const toggleMute = async () => {
     const newMutedState = !isMuted;
-    const video = videoRef.current;
-    const audio = audioRef.current;
-    
-    // Update video mute state if video exists
-    if (video && currentReel?.videoUrl) {
-      video.muted = newMutedState;
+    if (audioManagerRef.current) {
+      await audioManagerRef.current.setMuted(newMutedState);
     }
-    
-    // Handle audio mute/unmute
-    if (audio && music?.url) {
-      audio.muted = newMutedState;
-      
-      // If unmuting, try to play the audio
-      if (newMutedState === false) {
-        // Sync with video time if video exists
-        if (video && currentReel?.videoUrl) {
-          audio.currentTime = video.currentTime;
-        }
-        
-        audio.play().catch(error => {
-          console.warn('Audio playback failed, trying muted:', error);
-          // Fallback to muted if needed
-          audio.muted = true;
-          audio.play().catch(console.error);
-        });
-      }
+    // Keep video muted always; we use separate audio track
+    if (videoRef.current) {
+      videoRef.current.muted = true;
     }
-    
     setIsMuted(newMutedState);
   };
+
+
+  // Strongly ensure no media from previous reel continues playing
+  const strongStopAllMedia = useCallback(() => {
+    try {
+      const a = audioRef.current;
+      if (a) {
+        try { a.pause(); } catch {}
+        try { a.currentTime = 0; } catch {}
+        try { a.muted = true; } catch {}
+        try { a.src = ''; a.load(); } catch {}
+        try { a.volume = 0; } catch {}
+      }
+    } catch {}
+    try {
+      const v = videoRef.current;
+      if (v) {
+        try { v.pause(); } catch {}
+        try { v.currentTime = 0; } catch {}
+        try { v.muted = true; } catch {}
+      }
+    } catch {}
+    pendingAutoPlay.current = false;
+  }, []);
 
   if (loading) {
     return (
@@ -1010,7 +1013,6 @@ export default function Reels() {
           ref={audioRef}
           src={music.url}
           loop
-          muted={isMuted}
           preload="auto"
           crossOrigin="anonymous"
           onPlay={() => console.log('Audio playback started:', music.url)}
@@ -1019,72 +1021,21 @@ export default function Reels() {
             const audio = e.target as HTMLAudioElement;
             const error = audio.error;
             const errorInfo = {
-              // Use error code and message which are standard properties
               errorCode: error?.code,
               errorMessage: error?.message,
-              // Map error code to human-readable name
               errorType: error?.code === 1 ? 'MEDIA_ERR_ABORTED' :
-                        error?.code === 2 ? 'MEDIA_ERR_NETWORK' :
-                        error?.code === 3 ? 'MEDIA_ERR_DECODE' :
-                        error?.code === 4 ? 'MEDIA_ERR_SRC_NOT_SUPPORTED' :
-                        'UNKNOWN_ERROR',
-              src: audio.src,
-              networkState: getNetworkState(audio.networkState),
-              readyState: getReadyState(audio.readyState),
-              currentTime: audio.currentTime,
-              duration: audio.duration,
-              paused: audio.paused,
-              muted: audio.muted,
-              volume: audio.volume
+                         error?.code === 2 ? 'MEDIA_ERR_NETWORK' :
+                         error?.code === 3 ? 'MEDIA_ERR_DECODE' :
+                         error?.code === 4 ? 'MEDIA_ERR_SRC_NOT_SUPPORTED' :
+                         'UNKNOWN_ERROR'
             };
-            console.error('Audio playback error:', errorInfo);
+            console.error('Audio error:', errorInfo);
           }}
           onCanPlayThrough={() => {
-            console.log('Audio can play through');
-            const audio = audioRef.current;
-            if (!audio) return;
-            
-            console.log('Audio element state:', {
-              readyState: getReadyState(audio.readyState),
-              networkState: getNetworkState(audio.networkState),
-              currentTime: audio.currentTime,
-              duration: audio.duration,
-              paused: audio.paused,
-              muted: audio.muted
-            });
-            
-            if (!audio.paused) return;
-            
-            // Try to play the audio (muted) if it's not already playing
-            audio.muted = true;
-            audio.volume = 0;
-            const playPromise = audio.play();
-            
-            if (playPromise !== undefined) {
-              playPromise
-                .then(() => {
-                  console.log('Audio playback started successfully (muted)');
-                  // Best-effort fade-in
-                  const a = audioRef.current;
-                  if (a) {
-                    (async () => {
-                      try {
-                        a.muted = false;
-                        await fadeVolume(a, 0, 1, 250);
-                        setIsMuted(false);
-                      } catch {
-                        a.muted = true;
-                        setIsMuted(true);
-                      }
-                    })();
-                  }
-                })
-                .catch(error => {
-                  console.warn('Audio play() failed:', error);
-                  // Fallback: try muted playback only
-                  audio.muted = true;
-                  audio.play().catch(e => console.warn('Muted retry play() failed:', e));
-                });
+            // If paused but should be playing, resume
+            const v = videoRef.current;
+            if (v && v.paused && isPlaying) {
+              v.play().catch(console.warn);
             }
           }}
           onLoadedMetadata={() => {
@@ -1164,9 +1115,10 @@ export default function Reels() {
             src={currentReel.videoUrl}
             poster={currentReel.posterImage}
             loop
-            muted={isMuted}
             playsInline
-            preload="metadata"
+            autoPlay
+            muted
+            preload="auto"
             disablePictureInPicture
             className="w-full h-full object-cover"
             onPlay={() => {
@@ -1186,31 +1138,26 @@ export default function Reels() {
             }}
             onLoadedData={() => {
               // Video loaded successfully
-              if (videoRef.current && !isPlaying) {
-                videoRef.current.play().then(() => setIsPlaying(true)).catch(() => {
-                  console.log('Autoplay blocked, video will play on user interaction');
-                });
+              const v = videoRef.current;
+              if (v && v.paused && isPlaying) {
+                v.play().catch(console.warn);
               }
             }}
             onWaiting={() => {
-              // Network hiccup — keep muted, try resuming when ready
-              const v = videoRef.current; if (!v) return;
-              v.muted = true;
-              setIsMuted(true);
+              // Network hiccup — ensure muted
+              const v = videoRef.current;
+              if (v) v.muted = true;
             }}
             onStalled={() => {
               // Attempt a small nudge to resume
-              const v = videoRef.current; if (!v) return;
-              const t = v.currentTime;
-              v.currentTime = Math.max(0, t - 0.01);
+              const v = videoRef.current;
+              if (v) v.currentTime = Math.max(0, (v.currentTime - 0.1));
             }}
             onCanPlayThrough={() => {
-              // If paused due to buffering, try resuming
-              const v = videoRef.current; if (!v) return;
-              if (v.paused && isPlaying) {
-                v.play().then(() => setIsPlaying(true)).catch((error) => {
-                  console.error('Failed to resume video:', error);
-                });
+              // If paused but should be playing, resume
+              const v = videoRef.current;
+              if (v && v.paused && isPlaying) {
+                v.play().catch(console.warn);
               }
             }}
             onError={(e) => {
@@ -1280,13 +1227,7 @@ export default function Reels() {
               variant="ghost"
               size="icon"
               className="text-white hover:text-white/90 relative group"
-              onClick={(e) => {
-                e.stopPropagation();
-                const newMutedState = !isMuted;
-                setIsMuted(newMutedState);
-                if (videoRef.current) videoRef.current.muted = newMutedState;
-                if (audioRef.current) audioRef.current.muted = newMutedState;
-              }}
+              onClick={(e) => { e.stopPropagation(); toggleMute(); }}
               aria-label={isMuted ? 'Unmute' : 'Mute'}
             >
               {isMuted ? (
