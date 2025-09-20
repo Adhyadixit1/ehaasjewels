@@ -272,6 +272,10 @@ export default function Reels() {
   const [isPlaying, setIsPlaying] = useState(true);
   const [isMuted, setIsMuted] = useState(true);
   const audioManagerRef = useRef<AudioManager | null>(null); // Start unmuted to allow audio playback
+  // Background media preloading caches
+  const preloadedImagesRef = useRef<Map<string, HTMLImageElement>>(new Map());
+  const preloadedVideosRef = useRef<Map<string, HTMLVideoElement>>(new Map());
+  const prefetchLinksRef = useRef<Set<string>>(new Set());
   const [music, setMusic] = useState<{
     url: string;
     title?: string;
@@ -282,6 +286,137 @@ export default function Reels() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [showProducts, setShowProducts] = useState(false);
   const [reelStates, setReelStates] = useState<Reel[]>([]);
+
+  // Helper: add <link rel="prefetch"> for a URL
+  const addPrefetch = useCallback((url: string) => {
+    if (!url || prefetchLinksRef.current.has(url)) return;
+    const link = document.createElement('link');
+    link.rel = 'prefetch';
+    link.href = url;
+    link.as = 'fetch';
+    link.crossOrigin = 'anonymous';
+    document.head.appendChild(link);
+    prefetchLinksRef.current.add(url);
+  }, []);
+
+  // Helper: preload an image and cache it
+  const preloadImage = useCallback(async (url?: string | null) => {
+    if (!url) return;
+    if (preloadedImagesRef.current.has(url)) return;
+    await new Promise<void>((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve();
+      img.onerror = () => reject(new Error('Image preload failed'));
+      img.decoding = 'async';
+      img.src = url;
+      preloadedImagesRef.current.set(url, img);
+    }).catch(() => {});
+  }, []);
+
+  // Helper: preload a video metadata/buffer and cache it
+  const preloadVideo = useCallback(async (url?: string | null) => {
+    if (!url) return;
+    if (preloadedVideosRef.current.has(url)) return;
+    await new Promise<void>((resolve, reject) => {
+      const v = document.createElement('video');
+      v.preload = 'auto';
+      v.muted = true;
+      v.playsInline = true as any;
+      v.src = url;
+      const onCanPlay = () => { cleanup(); resolve(); };
+      const onError = () => { cleanup(); reject(new Error('Video preload failed')); };
+      const cleanup = () => {
+        v.removeEventListener('canplay', onCanPlay);
+        v.removeEventListener('error', onError);
+      };
+      v.addEventListener('canplay', onCanPlay, { once: true });
+      v.addEventListener('error', onError, { once: true });
+      // Kick off load
+      try { v.load(); } catch {}
+      preloadedVideosRef.current.set(url, v);
+    }).catch(() => {});
+  }, []);
+
+  // Preload next reels' media to improve perceived performance
+  useEffect(() => {
+    if (!reelStates || reelStates.length === 0) return;
+    const PRELOAD_AHEAD = 2;
+    const PRELOAD_BEHIND = 1; // for quick reverse scrolls
+
+    const indicesToPreload = new Set<number>();
+    for (let i = 1; i <= PRELOAD_AHEAD; i++) {
+      const idx = currentReelIndex + i;
+      if (idx < reelStates.length) indicesToPreload.add(idx);
+    }
+    for (let i = 1; i <= PRELOAD_BEHIND; i++) {
+      const idx = currentReelIndex - i;
+      if (idx >= 0) indicesToPreload.add(idx);
+    }
+
+    // Trigger preloads
+    indicesToPreload.forEach((idx) => {
+      const reel = reelStates[idx];
+      if (!reel) return;
+      // Poster and gallery
+      preloadImage(reel.posterImage);
+      if (Array.isArray(reel.galleryImages)) {
+        // Preload first few gallery images
+        for (let i = 0; i < Math.min(2, reel.galleryImages.length); i++) {
+          preloadImage(reel.galleryImages[i]);
+        }
+      }
+      // Video
+      if (reel.videoUrl) {
+        preloadVideo(reel.videoUrl);
+      }
+      // Music/audio
+      const musicUrl = (reel as any).music?.url || (reel as any).music_audio_url || (reel as any).music_url;
+      if (musicUrl) addPrefetch(musicUrl);
+    });
+
+    // Prune caches to keep memory bounded
+    const minKeep = Math.max(0, currentReelIndex - PRELOAD_BEHIND);
+    const maxKeep = Math.min(reelStates.length - 1, currentReelIndex + PRELOAD_AHEAD);
+    const urlsInWindow = new Set<string>();
+    for (let i = minKeep; i <= maxKeep; i++) {
+      const r = reelStates[i]; if (!r) continue;
+      if (r.posterImage) urlsInWindow.add(r.posterImage);
+      if (Array.isArray(r.galleryImages)) r.galleryImages.slice(0, 2).forEach(u => urlsInWindow.add(u));
+      if (r.videoUrl) urlsInWindow.add(r.videoUrl);
+      const au = (r as any).music?.url || (r as any).music_audio_url || (r as any).music_url;
+      if (au) urlsInWindow.add(au);
+    }
+
+    // Remove images not in window
+    preloadedImagesRef.current.forEach((_, url) => {
+      if (!urlsInWindow.has(url)) {
+        preloadedImagesRef.current.delete(url);
+      }
+    });
+    // Remove videos not in window
+    preloadedVideosRef.current.forEach((v, url) => {
+      if (!urlsInWindow.has(url)) {
+        try { v.src = ''; v.load(); } catch {}
+        preloadedVideosRef.current.delete(url);
+      }
+    });
+    // Note: we don't remove prefetch <link>s aggressively; they are cheap
+
+    return () => {
+      // No-op; caches persist across index changes
+    };
+  }, [currentReelIndex, reelStates, addPrefetch, preloadImage, preloadVideo]);
+
+  // Cleanup caches on unmount
+  useEffect(() => {
+    return () => {
+      preloadedVideosRef.current.forEach((v) => { try { v.src = ''; v.load(); } catch {} });
+      preloadedVideosRef.current.clear();
+      preloadedImagesRef.current.clear();
+      // Optionally remove prefetch links
+      // We leave them as-is since browsers GC them; implement if needed
+    };
+  }, []);
   const [expandedDescription, setExpandedDescription] = useState(false);
   const [isDeepLinked, setIsDeepLinked] = useState(false);
   const [videoError, setVideoError] = useState(false); // Add video error state

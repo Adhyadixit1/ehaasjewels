@@ -24,6 +24,7 @@ import {
   Minus
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { OptimizedImage } from '@/components/OptimizedImage';
 import { ProductCard } from '@/components/ProductCard';
 import { Footer } from '@/components/Footer';
 import LowStockCounter from '@/components/fomo/LowStockCounter';
@@ -764,11 +765,16 @@ export default function ProductDetail() {
           onTouchMove={onTouchMove}
           onTouchEnd={onTouchEnd}
         >
-          <img
+          <OptimizedImage
             key={selectedImageIndex}
             src={gallery[selectedImageIndex]}
             alt={product.name}
             className="w-full h-full object-cover"
+            sizes="(max-width: 640px) 100vw, (max-width: 1024px) 90vw, 600px"
+            widths={[320, 480, 640, 800, 1024, 1280]}
+            quality={70}
+            loading="eager"
+            fetchPriority="high"
             style={{ transform: `translateX(${touchDeltaX * 0.3}px)` } as React.CSSProperties}
           />
           
@@ -814,10 +820,15 @@ export default function ProductDetail() {
                 index === selectedImageIndex ? 'border-primary' : 'border-gray-200'
               }`}
             >
-              <img
+              <OptimizedImage
                 src={image}
                 alt={`${product.name} view ${index + 1}`}
                 className="w-full h-full object-cover"
+                sizes="64px"
+                widths={[64, 96, 128]}
+                quality={60}
+                loading="lazy"
+                decoding="async"
               />
             </button>
           ))}

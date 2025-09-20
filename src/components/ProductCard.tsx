@@ -1,5 +1,6 @@
 import { Heart, Share2, ShoppingCart } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { OptimizedImage } from '@/components/OptimizedImage';
 import { useNavigate } from 'react-router-dom';
 import { useCart } from '@/contexts/CartContext';
 import { useAuth } from '@/contexts/AuthContext';
@@ -143,12 +144,17 @@ export function ProductCard({
       onClick={handleCardClick}
     >
       <div className="relative overflow-hidden group">
-        <img 
-          src={product.image} 
+        <OptimizedImage
+          src={product.image}
           alt={product.name}
           className={imageClasses}
-          loading={index < 4 ? "eager" : "lazy"}
+          loading={index < 4 ? 'eager' : 'lazy'}
           decoding="async"
+          // Responsive sizes: full width on small screens, half on tablets, third on desktop
+          sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
+          widths={[200, 400, 600, 800, 1200]}
+          quality={70}
+          fetchPriority={index < 4 ? 'high' : undefined}
         />
         <div className="absolute inset-0 bg-gradient-overlay opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
       </div>
