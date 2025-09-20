@@ -255,8 +255,17 @@ const generateReelsFromProducts = (products: any[]) => {
       products: [{
         id: product.id.toString(),
         name: product.name,
-        price: product.sale_price || product.price,
-        originalPrice: product.sale_price ? product.price : undefined,
+        // Generic mapping: smaller value is current price, larger is compare-at
+        ...(() => {
+          const base = Number(product.price ?? 0);
+          const alt = product.sale_price;
+          if (alt == null || alt === base) {
+            return { price: base, originalPrice: undefined };
+          }
+          const current = Math.min(base, Number(alt));
+          const original = Math.max(base, Number(alt));
+          return { price: current, originalPrice: original };
+        })(),
         image: posterImage
       }]
     };

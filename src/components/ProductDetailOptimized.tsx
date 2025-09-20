@@ -146,6 +146,18 @@ export default function ProductDetailOptimized() {
     fetchProduct();
   }, [id]);
 
+  // Compute current and original prices so the smaller value is shown as current price
+  const computePrices = (p: Product, variant: ProductVariant | null) => {
+    const base = variant?.price ?? p.price;
+    const alt = p.sale_price;
+    if (alt == null || alt === base) {
+      return { current: base, original: undefined as number | undefined };
+    }
+    const current = Math.min(base, alt);
+    const original = Math.max(base, alt);
+    return { current, original };
+  };
+
   const handleAddToCart = () => {
     if (!product) return;
     
@@ -164,10 +176,12 @@ export default function ProductDetailOptimized() {
       });
     }
     
+    const { current } = computePrices(product, selectedVariant);
+
     addToCart({
       id: selectedVariant ? `${product.id.toString()}-${selectedVariant.id}` : product.id.toString(),
       name: product.name,
-      price: selectedVariant?.price || product.sale_price || product.price,
+      price: current,
       image: getProductImage(product),
       variantName: variantName,
       ...variantProperties,
@@ -192,10 +206,12 @@ export default function ProductDetailOptimized() {
       });
     }
     
+    const { current } = computePrices(product, selectedVariant);
+
     addToCart({
       id: selectedVariant ? `${product.id.toString()}-${selectedVariant.id}` : product.id.toString(),
       name: product.name,
-      price: selectedVariant?.price || product.sale_price || product.price,
+      price: current,
       image: getProductImage(product),
       variantName: variantName,
       ...variantProperties,
@@ -372,9 +388,9 @@ export default function ProductDetailOptimized() {
   const rating = generateRating(id || '');
   const reviewCount = generateReviewCount(id || '');
   
-  // Determine current product price (variant price takes precedence)
-  const currentPrice = selectedVariant?.price || product.sale_price || product.price;
-  const originalPrice = product.sale_price ? product.price : undefined;
+  // Determine current and original (compare-at) prices generically:
+  // show the smaller as current and the larger crossed-out as compare-at
+  const { current: currentPrice, original: originalPrice } = computePrices(product, selectedVariant);
 
   return (
     <div className="page-scroll bg-background">

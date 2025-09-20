@@ -601,8 +601,10 @@ export default function ProductDetail() {
     return {
       id: product.id.toString(),
       name: product.name,
-      price: product.price,
-      originalPrice: product.sale_price,
+      // Current price should be sale_price when present, else price
+      price: product.sale_price || product.price,
+      // Compare-at price should be the base price only when a sale is active
+      originalPrice: product.sale_price ? product.price : undefined,
       rating: product.average_rating?.toFixed(1) || '0.0',
       reviews: product.review_count || 0,
       image: getProductImage(product),
@@ -730,7 +732,9 @@ export default function ProductDetail() {
   const reviewCount = generateReviewCount(id || '');
   
   // Determine current product price (variant price takes precedence)
+  // Use sale_price as current if present; otherwise use price. When on variant, its price is the current price.
   const currentPrice = selectedVariant?.price || product.sale_price || product.price;
+  // Compare-at (original) price is the base price when a sale is active
   const originalPrice = product.sale_price ? product.price : undefined;
   
   return (
