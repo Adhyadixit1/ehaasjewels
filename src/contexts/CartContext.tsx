@@ -13,6 +13,16 @@ export interface CartItem {
   variantName?: string; // Add variant name property
 }
 
+interface PromoCode {
+  code: string;
+  discountType: 'percentage' | 'fixed';
+  value: number;
+  minPurchase?: number;
+  maxDiscount?: number;
+  isFirstOrderOnly: boolean;
+  description: string;
+}
+
 interface CartContextType {
   cartItems: CartItem[];
   addToCart: (item: Omit<CartItem, 'quantity'>, quantity?: number) => void;
@@ -24,6 +34,11 @@ interface CartContextType {
   getDiscountAmount: () => number;
   getFinalTotal: () => number;
   getItemQuantity: (itemId: string) => number;
+  applyPromoCode: (code: string) => { success: boolean; message: string };
+  removePromoCode: () => void;
+  appliedPromoCode: PromoCode | null;
+  promoCodeDiscount: number;
+  isFirstOrder: boolean;
 }
 
 const CartContext = createContext<CartContextType | undefined>(undefined);
@@ -145,6 +160,35 @@ interface CartProviderProps {
   children: ReactNode;
 }
 
+// Define available promo codes
+const PROMO_CODES: PromoCode[] = [
+  {
+    code: 'WELCOME10',
+    discountType: 'percentage',
+    value: 10,
+    minPurchase: 0,
+    isFirstOrderOnly: true,
+    description: '10% off on your first order',
+  },
+  {
+    code: 'FREESHIP',
+    discountType: 'fixed',
+    value: 99, // Assuming 99 is the shipping cost
+    minPurchase: 999,
+    isFirstOrderOnly: false,
+    description: 'Free shipping on orders above ₹999',
+  },
+  {
+    code: 'EXTRA15',
+    discountType: 'percentage',
+    value: 15,
+    minPurchase: 1999,
+    maxDiscount: 500,
+    isFirstOrderOnly: false,
+    description: '15% off (max ₹500) on orders above ₹1999',
+  },
+];
+
 export const CartProvider: React.FC<CartProviderProps> = ({ children }) => {
   const sessionId = generateSessionId();
   
@@ -160,6 +204,34 @@ export const CartProvider: React.FC<CartProviderProps> = ({ children }) => {
       }
     }
     return [];
+  });
+  
+  // Promo code state
+  const [appliedPromoCode, setAppliedPromoCode] = useState<PromoCode | null>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const savedPromo = localStorage.getItem('jewellery-ehsaas-promo');
+        return savedPromo ? JSON.parse(savedPromo) : null;
+      } catch (error) {
+        console.error('Error loading promo code from localStorage:', error);
+        return null;
+      }
+    }
+    return null;
+  });
+  
+  // Check if it's user's first order
+  const [isFirstOrder, setIsFirstOrder] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const hasOrdered = localStorage.getItem('jewellery-ehsaas-has-ordered');
+        return hasOrdered !== 'true';
+      } catch (error) {
+        console.error('Error checking first order status:', error);
+        return true; // Default to true to be safe
+      }
+    }
+    return true;
   });
 
   // Save cart items to localStorage whenever cartItems changes
@@ -226,26 +298,128 @@ export const CartProvider: React.FC<CartProviderProps> = ({ children }) => {
     return cartItems.reduce((total, item) => total + (item.price * item.quantity), 0);
   };
 
+  // Calculate promo code discount
+  const calculatePromoDiscount = (totalPrice: number): number => {
+    if (!appliedPromoCode) return 0;
+    
+    const { discountType, value, minPurchase = 0, maxDiscount } = appliedPromoCode;
+    
+    // Check minimum purchase requirement
+    if (totalPrice < minPurchase) return 0;
+    
+    let discount = 0;
+    
+    if (discountType === 'percentage') {
+      discount = (totalPrice * value) / 100;
+      if (maxDiscount && discount > maxDiscount) {
+        discount = maxDiscount;
+      }
+    } else {
+      // Fixed discount
+      discount = value;
+    }
+    
+    // Don't let discount exceed the total price
+    return Math.min(discount, totalPrice);
+  };
+
   const getDiscountAmount = () => {
     const totalItems = getTotalItems();
     const totalPrice = getTotalPrice();
     
+    // Calculate base discount based on quantity
+    let baseDiscount = 0;
     if (totalItems >= 3) {
       // 300 off for 3+ products
-      return 300;
+      baseDiscount = 300;
     } else if (totalItems >= 2) {
-      // 20% off upto 200 for 2 products
+      // 20% off up to 200 for 2 products
       const discount = (totalPrice * 20) / 100;
-      return Math.min(discount, 200);
+      baseDiscount = Math.min(discount, 200);
     }
     
-    return 0;
+    // Add promo code discount
+    const promoDiscount = calculatePromoDiscount(totalPrice);
+    
+    // Return the higher of the two discounts
+    return Math.max(baseDiscount, promoDiscount);
   };
+  
+  // Track promo code discount separately for display
+  const promoCodeDiscount = appliedPromoCode ? calculatePromoDiscount(getTotalPrice()) : 0;
 
   const getFinalTotal = () => {
     const totalPrice = getTotalPrice();
     const discountAmount = getDiscountAmount();
     return Math.max(0, totalPrice - discountAmount);
+  };
+  
+  // Apply promo code
+  const applyPromoCode = (code: string) => {
+    const promoCode = PROMO_CODES.find(
+      pc => pc.code.toUpperCase() === code.toUpperCase()
+    );
+    
+    if (!promoCode) {
+      return { success: false, message: 'Invalid promo code' };
+    }
+    
+    // Check if it's a first-order-only code
+    if (promoCode.isFirstOrderOnly && !isFirstOrder) {
+      return { 
+        success: false, 
+        message: 'This promo code is only valid for your first order' 
+      };
+    }
+    
+    // Check minimum purchase requirement
+    const totalPrice = getTotalPrice();
+    if (promoCode.minPurchase && totalPrice < promoCode.minPurchase) {
+      return { 
+        success: false, 
+        message: `Minimum purchase of ₹${promoCode.minPurchase} required for this promo code` 
+      };
+    }
+    
+    setAppliedPromoCode(promoCode);
+    
+    // Save to localStorage
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('jewellery-ehsaas-promo', JSON.stringify(promoCode));
+      } catch (error) {
+        console.error('Error saving promo code to localStorage:', error);
+      }
+    }
+    
+    return { 
+      success: true, 
+      message: `Promo code applied: ${promoCode.description}` 
+    };
+  };
+  
+  // Remove promo code
+  const removePromoCode = () => {
+    setAppliedPromoCode(null);
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.removeItem('jewellery-ehsaas-promo');
+      } catch (error) {
+        console.error('Error removing promo code from localStorage:', error);
+      }
+    }
+  };
+  
+  // Mark that user has placed an order
+  const markOrderPlaced = () => {
+    setIsFirstOrder(false);
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('jewellery-ehsaas-has-ordered', 'true');
+      } catch (error) {
+        console.error('Error saving order status to localStorage:', error);
+      }
+    }
   };
 
   const getItemQuantity = (itemId: string) => {
@@ -264,6 +438,11 @@ export const CartProvider: React.FC<CartProviderProps> = ({ children }) => {
     getDiscountAmount,
     getFinalTotal,
     getItemQuantity,
+    applyPromoCode,
+    removePromoCode,
+    appliedPromoCode,
+    promoCodeDiscount,
+    isFirstOrder,
   };
 
   return (

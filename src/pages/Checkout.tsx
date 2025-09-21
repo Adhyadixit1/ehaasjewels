@@ -9,7 +9,7 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Separator } from '@/components/ui/separator';
-import { ArrowLeft, CreditCard, Truck, Shield } from 'lucide-react';
+import { ArrowLeft, CreditCard, Truck, Shield, Tag, X } from 'lucide-react';
 import { AppLoading } from '@/components/AppLoading';
 import { OrderProcessingLoader } from '@/components/OrderProcessingLoader';
 import OrderService from '@/services/OrderService';
@@ -80,7 +80,22 @@ interface PaymentInfo {
 
 const Checkout = () => {
   const navigate = useNavigate();
-  const { cartItems, clearCart, getTotalPrice, getDiscountAmount, getFinalTotal } = useCart();
+  const { 
+    cartItems, 
+    clearCart, 
+    getTotalPrice, 
+    getDiscountAmount, 
+    getFinalTotal, 
+    applyPromoCode, 
+    removePromoCode, 
+    appliedPromoCode, 
+    promoCodeDiscount,
+    isFirstOrder,
+  } = useCart();
+  
+  const [promoCode, setPromoCode] = useState('');
+  const [promoCodeMessage, setPromoCodeMessage] = useState({ text: '', isError: false });
+  const [showPromoInput, setShowPromoInput] = useState(false);
   const { user, isAuthenticated } = useAuth();
   const [shippingInfo, setShippingInfo] = useState<ShippingInfo>({
     fullName: '',
@@ -354,10 +369,13 @@ const Checkout = () => {
         userId = user?.id || 'anonymous';
       }
       
-      // Create order data with discount
+          // Create order data with discount
       const subtotal = getTotalPrice();
       const discountAmount = getDiscountAmount();
       const finalTotal = getFinalTotal();
+      
+      // Mark that user has placed an order
+      markOrderPlaced();
       
       const orderData = {
         orderNumber: 'EJ' + Date.now().toString().slice(-8),
@@ -430,6 +448,29 @@ const Checkout = () => {
       setShowOrderLoader(false);
     }
   };
+
+  const handleApplyPromoCode = () => {
+    if (!promoCode.trim()) return;
+    
+    const result = applyPromoCode(promoCode.trim());
+    setPromoCodeMessage({
+      text: result.message,
+      isError: !result.success
+    });
+    
+    if (result.success) {
+      setPromoCode('');
+      setShowPromoInput(false);
+    }
+  };
+
+  // Auto-suggest welcome10 for first-time users
+  useEffect(() => {
+    if (isFirstOrder && !appliedPromoCode) {
+      setPromoCode('WELCOME10');
+      setShowPromoInput(true);
+    }
+  }, [isFirstOrder, appliedPromoCode]);
 
   const renderShippingForm = () => (
     <Card>
@@ -734,25 +775,91 @@ const Checkout = () => {
           <CardTitle>Order Summary</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="space-y-2">
-            <div className="flex justify-between">
-              <span>Subtotal</span>
-              <span>{formatPrice(getTotalPrice())}</span>
-            </div>
-            {getDiscountAmount() > 0 && (
-              <div className="flex justify-between text-green-600">
-                <span>Discount</span>
-                <span>-{formatPrice(getDiscountAmount())}</span>
+          <div className="space-y-4">
+            <h3 className="text-lg font-medium">Order Summary</h3>
+            <div className="space-y-3">
+              <div className="flex justify-between">
+                <span>Subtotal</span>
+                <span>₹{getTotalPrice().toFixed(2)}</span>
               </div>
-            )}
-            <div className="flex justify-between">
-              <span>Shipping</span>
-              <span className="text-green-600">Free</span>
-            </div>
-            <Separator />
-            <div className="flex justify-between font-semibold text-lg">
-              <span>Total</span>
-              <span className="text-luxury">{formatPrice(getFinalTotal())}</span>
+              
+              {/* Promo Code Section */}
+              {appliedPromoCode ? (
+                <div className="bg-green-50 p-3 rounded-md">
+                  <div className="flex justify-between items-center">
+                    <div className="flex items-center space-x-2">
+                      <Tag className="h-4 w-4 text-green-600" />
+                      <span className="text-sm font-medium text-green-700">
+                        {appliedPromoCode.code}: {appliedPromoCode.description}
+                      </span>
+                    </div>
+                    <div className="flex items-center">
+                      <span className="text-sm font-medium text-green-700 mr-2">
+                        -₹{promoCodeDiscount.toFixed(2)}
+                      </span>
+                      <button 
+                        onClick={() => {
+                          removePromoCode();
+                          setPromoCodeMessage({ text: 'Promo code removed', isError: false });
+                        }}
+                        className="text-gray-400 hover:text-gray-600"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {showPromoInput ? (
+                    <div className="space-y-2">
+                      <div className="flex space-x-2">
+                        <Input
+                          type="text"
+                          placeholder="Enter promo code"
+                          value={promoCode}
+                          onChange={(e) => setPromoCode(e.target.value)}
+                          className="flex-1"
+                        />
+                        <Button 
+                          type="button" 
+                          variant="outline"
+                          onClick={handleApplyPromoCode}
+                        >
+                          Apply
+                        </Button>
+                      </div>
+                      {promoCodeMessage.text && (
+                        <p className={`text-sm ${promoCodeMessage.isError ? 'text-red-500' : 'text-green-600'}`}>
+                          {promoCodeMessage.text}
+                        </p>
+                      )}
+                    </div>
+                  ) : (
+                    <button 
+                      type="button"
+                      onClick={() => setShowPromoInput(true)}
+                      className="text-sm text-primary hover:underline flex items-center"
+                    >
+                      <Tag className="h-4 w-4 mr-1" />
+                      Have a promo code?
+                    </button>
+                  )}
+                </div>
+              )}
+              
+              {getDiscountAmount() > 0 && (
+                <div className="flex justify-between text-green-600">
+                  <span>Discount</span>
+                  <span>-₹{getDiscountAmount().toFixed(2)}</span>
+                </div>
+              )}
+              
+              <Separator />
+              <div className="flex justify-between font-medium">
+                <span>Total</span>
+                <span>₹{getFinalTotal().toFixed(2)}</span>
+              </div>
             </div>
           </div>
         </CardContent>

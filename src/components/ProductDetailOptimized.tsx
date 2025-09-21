@@ -216,7 +216,9 @@ export default function ProductDetailOptimized() {
       variantName: variantName,
       ...variantProperties,
     }, quantity);
-    navigate('/checkout');
+    
+    // Navigate to cart page instead of checkout
+    navigate('/cart');
   };
 
   const toggleWishlist = (productId: string) => {
@@ -397,20 +399,35 @@ export default function ProductDetailOptimized() {
       {/* Header */}
       <header className="sticky top-0 z-30 bg-background/95 backdrop-blur-sm border-b border-border">
         <div className="flex items-center justify-between p-4">
-          <Button variant="ghost" size="sm" onClick={() => navigate('/')}>
-            <ArrowLeft className="w-4 h-4 mr-2" />
-            Back
-          </Button>
-          <div className="flex gap-2">
+          <div className="flex items-center space-x-4">
+            <Button variant="ghost" size="icon" onClick={() => navigate(-1)}>
+              <ArrowLeft className="w-5 h-5" />
+            </Button>
+            <h1 className="font-semibold text-base line-clamp-1">{product.name}</h1>
+          </div>
+          <div className="flex items-center gap-2">
             <Button
               variant="ghost"
-              size="sm"
+              size="icon"
               onClick={() => toggleWishlist(product.id.toString())}
             >
-              <Heart className={`w-4 h-4 ${wishlist.has(product.id.toString()) ? 'fill-current text-primary' : ''}`} />
+              <Heart className={`w-5 h-5 ${wishlist.has(product.id.toString()) ? 'fill-current text-primary' : ''}`} />
             </Button>
-            <Button variant="ghost" size="sm" onClick={handleShare}>
-              <Share2 className="w-4 h-4" />
+            <Button variant="ghost" size="icon" onClick={handleShare}>
+              <Share2 className="w-5 h-5" />
+            </Button>
+            <Button 
+              variant="ghost" 
+              size="icon" 
+              className="relative mr-1"
+              onClick={() => navigate('/cart')}
+            >
+              <ShoppingBag className="w-5 h-5" />
+              {cartQuantity > 0 && (
+                <span className="absolute -top-1 -right-1 bg-primary text-white text-xs font-medium rounded-full h-5 w-5 flex items-center justify-center">
+                  {cartQuantity > 9 ? '9+' : cartQuantity}
+                </span>
+              )}
             </Button>
           </div>
         </div>
