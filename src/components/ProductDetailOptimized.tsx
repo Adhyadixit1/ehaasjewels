@@ -1,68 +1,41 @@
-import { useState, useEffect, lazy, Suspense } from 'react';
+import { useState, useEffect, lazy, Suspense, useCallback, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useCart } from '@/contexts/CartContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { useToast } from '@/hooks/use-toast';
-import { ProductService, ProductVariant } from '@/services/ProductService';
-import { ProductCacheService } from '@/services/ProductCacheService';
-import { 
-  ArrowLeft, 
-  Heart, 
-  Share2, 
-  Star, 
-  ShoppingBag, 
-  ChevronLeft, 
-  ChevronRight,
-  Plus,
-  Minus,
+import { ProductService, ProductData, ProductVariant } from '@/services/ProductService';
+import {
+  ArrowLeft,
+  Heart,
+  Share2,
+  ShoppingBag,
   Shield,
   Truck,
   RotateCcw,
   MessageCircle
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Footer } from '@/components/Footer';
-import LowStockCounter from '@/components/fomo/LowStockCounter';
-import SocialProofIndicators from '@/components/fomo/SocialProofIndicators';
-import UrgencyMessaging from '@/components/fomo/UrgencyMessaging';
-import { generateRating, generateReviewCount } from '@/utils/reviewData';
 import { FullPageLoading, InlineLoading } from '@/components/AppLoading';
 
-// Lazy load secondary components
-const ProductCard = lazy(() => import('./ProductCard').then(module => ({ default: module.ProductCard })));
-const ProductReviews = lazy(() => import('./ProductReviews'));
-const ProductDescription = lazy(() => import('./ProductDescription'));
-const ProductRecommendations = lazy(() => import('./ProductRecommendations'));
+// Lazy load heavy components
+const ProductReviews = lazy(() => import('./ProductReviews').then(module => ({ default: module.default })));
+const ProductDescription = lazy(() => import('./ProductDescription').then(module => ({ default: module.default })));
+const ProductRecommendations = lazy(() => import('./ProductRecommendations').then(module => ({ default: module.default })));
+
+// Import optimized components
+import { ProductGallery } from './ProductGallery';
+import { ProductInfo } from './ProductInfo';
+import { ProductActions } from './ProductActions';
+
+import { generateRating, generateReviewCount } from '@/utils/reviewData';
+import { Footer } from './Footer';
 
 // Add a small comment to trigger TypeScript refresh
 // TypeScript import fix
 
-interface Product {
-  id: number;
-  name: string;
-  price: number;
-  sale_price?: number;
-  average_rating?: number;
-  review_count?: number;
-  description?: string;
-  short_description?: string;
-  sku: string;
-  stock_quantity: number;
-  is_active: boolean;
-  featured: boolean;
-  category_id?: number;
-  categories?: {
-    name: string;
-  };
-  product_images?: {
-    image_url: string;
-    is_primary: boolean;
-    media_type?: string;
-  }[];
-  product_specifications?: {
-    spec_name: string;
-    spec_value: string;
-  }[];
+interface Product extends ProductData {
+  // Extending ProductData for full compatibility
+  // Note: ProductData uses camelCase properties, so no additional properties needed
 }
 
 export default function ProductDetailOptimized() {
@@ -80,13 +53,50 @@ export default function ProductDetailOptimized() {
   // Touch slider state
   const [touchStartX, setTouchStartX] = useState<number | null>(null);
   const [touchDeltaX, setTouchDeltaX] = useState(0);
-  
+
   // Variant state
   const [variants, setVariants] = useState<ProductVariant[]>([]);
   const [selectedVariant, setSelectedVariant] = useState<ProductVariant | null>(null);
   const [selectedVariantOptions, setSelectedVariantOptions] = useState<Record<string, string>>({});
 
   const cartQuantity = product ? getItemQuantity(product.id.toString()) : 0;
+
+  // Helper: determine if a URL is an image
+  const isImageUrl = (url?: string) => {
+    if (!url) return false;
+    const lower = url.toLowerCase();
+    const videoExts = ['.mp4', '.webm', '.mov', '.mkv', '.avi', '.m4v'];
+    if (videoExts.some(ext => lower.endsWith(ext))) return false;
+    if (lower.includes('/video/')) return false;
+    return true;
+  };
+
+  // Get gallery images (only images, no videos)
+  const getGalleryImages = () => {
+    if (!product?.product_images) return [];
+
+    return product.product_images
+      .filter(img => ((img.media_type && typeof img.media_type === 'string' ? img.media_type.toLowerCase() : 'image') !== 'video') && isImageUrl(img.image_url))
+      .map(img => img.image_url)
+      .filter(Boolean) as string[];
+  };
+
+  // Helper: best image for non-reels contexts
+  const getProductImage = (product: any) => {
+    // If a variant is selected and has images, use the variant's primary image
+    if (selectedVariant && selectedVariant.images.length > 0) {
+      const primaryImage = selectedVariant.images.find(img => img.isPrimary);
+      if (primaryImage?.imageUrl) return primaryImage.imageUrl;
+      return selectedVariant.images[0].imageUrl;
+    }
+
+    const images = (product.product_images || []) as Array<{ image_url: string; is_primary: boolean; media_type?: string }>;
+    const primaryImage = images.find(img => img.is_primary && (img.media_type || 'image').toLowerCase() !== 'video' && isImageUrl(img.image_url));
+    if (primaryImage?.image_url) return primaryImage.image_url;
+    const firstImage = images.find(img => (img.media_type || 'image').toLowerCase() !== 'video' && isImageUrl(img.image_url));
+    if (firstImage?.image_url) return firstImage.image_url;
+    return '';
+  };
 
   useEffect(() => {
     const fetchProduct = async () => {
@@ -96,44 +106,28 @@ export default function ProductDetailOptimized() {
         setLoading(true);
         
         // Check cache first
-        let productData = ProductCacheService.getCachedProduct(id);
-        
-        if (!productData) {
-          // Fetch from API if not in cache
-          productData = await ProductService.getProductById(id);
+        // let productData = ProductCacheService.getCachedProduct(id);
+
+        // if (!productData) {
+          // Use optimized parallel API call
+        const { product, variants } = await ProductService.getProductWithVariants(id);
           // Cache the product
-          if (productData) {
-            ProductCacheService.cacheProduct(id, productData);
-            ProductCacheService.addRecentlyViewedProduct(productData);
-          }
-        }
+          // if (productData) {
+          //   ProductCacheService.cacheProduct(id, productData);
+          //   ProductCacheService.addRecentlyViewedProduct(productData);
+          // }
+        // }
         
-        if (productData) {
-          setProduct(productData);
-          
-          // Fetch variants if they exist
-          try {
-            const productVariants = await ProductService.getProductVariants(productData.id);
-            const productVariantOptions = await ProductService.getProductVariantOptions(productData.id);
-            
-            setVariants(productVariants);
-            // Set default selected options
-            if (productVariants.length > 0) {
-              const baseVariant = productVariants.find(v => v.options.length === 0);
-              const variantToSelect = baseVariant || productVariants[0];
-              
-              setSelectedVariant(variantToSelect);
-              const defaultOptions: Record<string, string> = {};
-              variantToSelect.options.forEach(option => {
-                defaultOptions[option.optionName] = option.value;
-              });
-              setSelectedVariantOptions(defaultOptions);
-            }
-          } catch (variantError) {
-            // Silently handle variant errors
-          }
+        if (product) {
+          setProduct(product);
+          setVariants(variants);
+          setLoading(false);
+
+          // Add to recently viewed
+          // ProductCacheService.addRecentlyViewedProduct(product);
         } else {
           setError('Product not found');
+          setLoading(false);
         }
       } catch (err) {
         setError('Failed to load product');
@@ -147,9 +141,14 @@ export default function ProductDetailOptimized() {
   }, [id]);
 
   // Compute current and original prices so the smaller value is shown as current price
-  const computePrices = (p: Product, variant: ProductVariant | null) => {
+  const computePrices = (p: Product | null, variant: ProductVariant | null) => {
+    // Early return if product is null
+    if (!p) {
+      return { current: 0, original: undefined as number | undefined };
+    }
+
     const base = variant?.price ?? p.price;
-    const alt = p.sale_price;
+    const alt = p.comparePrice;
     if (alt == null || alt === base) {
       return { current: base, original: undefined as number | undefined };
     }
@@ -243,107 +242,70 @@ export default function ProductDetailOptimized() {
     });
   };
 
-  const handleShare = async () => {
+  // Cleanup effect for memory leak prevention
+  useEffect(() => {
+    return () => {
+      // Cleanup any resources if needed
+      setProduct(null);
+      setVariants([]);
+      setSelectedVariant(null);
+      setSelectedVariantOptions({});
+    };
+  }, []);
+
+  // Optimized handlers with proper cleanup
+  const handleShare = useCallback(async () => {
     if (!product) return;
-    
+
     const shareData = {
       title: product.name,
-      text: product.description || product.short_description || '',
+      text: product.description || product.shortDescription || '',
       url: window.location.href,
     };
-    
+
     if (navigator.share) {
       try {
         await navigator.share(shareData);
       } catch (error) {
-        // Silently handle share errors
+        // Silently handle share errors - user cancelled or error occurred
+        if (error.name !== 'AbortError') {
+          console.warn('Share failed:', error);
+        }
       }
     } else {
-      await navigator.clipboard.writeText(window.location.href);
+      try {
+        await navigator.clipboard.writeText(window.location.href);
+        toast({
+          title: 'Link Copied',
+          description: 'Product link has been copied to clipboard',
+        });
+      } catch (error) {
+        console.warn('Clipboard access failed:', error);
+      }
     }
-  };
+  }, [product, toast]);
 
-  const nextImage = () => {
-    if (!product?.product_images) return;
-    const gallery = getGalleryImages();
-    setSelectedImageIndex((prev) => (prev + 1) % Math.max(1, gallery.length));
-  };
+  // Memoized expensive calculations
+  const gallery = useMemo(() => getGalleryImages(), [product?.product_images]);
 
-  const prevImage = () => {
-    if (!product?.product_images) return;
-    const gallery = getGalleryImages();
-    const len = Math.max(1, gallery.length);
-    setSelectedImageIndex((prev) => (prev - 1 + len) % len);
-  };
+  const specifications = useMemo(() =>
+    product?.product_specifications?.reduce((acc, spec) => {
+      acc[spec.spec_name] = spec.spec_value;
+      return acc;
+    }, {} as { [key: string]: string }) || {},
+    [product?.product_specifications]
+  );
 
-  // Touch handlers for swipe gestures
-  const onTouchStart = (e: React.TouchEvent) => {
-    setTouchStartX(e.touches[0].clientX);
-    setTouchDeltaX(0);
-  };
-
-  const onTouchMove = (e: React.TouchEvent) => {
-    if (touchStartX === null) return;
-    const currentX = e.touches[0].clientX;
-    setTouchDeltaX(currentX - touchStartX);
-  };
-
-  const onTouchEnd = () => {
-    const threshold = 50; // px to trigger swipe
-    if (touchDeltaX > threshold) {
-      prevImage();
-    } else if (touchDeltaX < -threshold) {
-      nextImage();
+  // Only compute prices when product is available
+  const { current: currentPrice, original: originalPrice } = useMemo(() => {
+    if (!product) {
+      return { current: 0, original: undefined as number | undefined };
     }
-    setTouchStartX(null);
-    setTouchDeltaX(0);
-  };
+    return computePrices(product, selectedVariant);
+  }, [product, selectedVariant]);
 
-  const renderStars = (rating: number) => {
-    return Array.from({ length: 5 }, (_, i) => (
-      <Star
-        key={i}
-        className={`w-4 h-4 ${i < rating ? 'fill-yellow-500 text-yellow-500' : 'text-gray-300'}`}
-      />
-    ));
-  };
-
-  // Helper: determine if a URL is an image
-  const isImageUrl = (url?: string) => {
-    if (!url) return false;
-    const lower = url.toLowerCase();
-    const videoExts = ['.mp4', '.webm', '.mov', '.mkv', '.avi', '.m4v'];
-    if (videoExts.some(ext => lower.endsWith(ext))) return false;
-    if (lower.includes('/video/')) return false;
-    return true;
-  };
-
-  // Get gallery images (only images, no videos)
-  const getGalleryImages = () => {
-    if (!product?.product_images) return [];
-    
-    return product.product_images
-      .filter(img => ((img.media_type && typeof img.media_type === 'string' ? img.media_type.toLowerCase() : 'image') !== 'video') && isImageUrl(img.image_url))
-      .map(img => img.image_url)
-      .filter(Boolean) as string[];
-  };
-
-  // Helper: best image for non-reels contexts
-  const getProductImage = (product: any) => {
-    // If a variant is selected and has images, use the variant's primary image
-    if (selectedVariant && selectedVariant.images.length > 0) {
-      const primaryImage = selectedVariant.images.find(img => img.isPrimary);
-      if (primaryImage?.imageUrl) return primaryImage.imageUrl;
-      return selectedVariant.images[0].imageUrl;
-    }
-    
-    const images = (product.product_images || []) as Array<{ image_url: string; is_primary: boolean; media_type?: string }>;
-    const primaryImage = images.find(img => img.is_primary && (img.media_type || 'image').toLowerCase() !== 'video' && isImageUrl(img.image_url));
-    if (primaryImage?.image_url) return primaryImage.image_url;
-    const firstImage = images.find(img => (img.media_type || 'image').toLowerCase() !== 'video' && isImageUrl(img.image_url));
-    if (firstImage?.image_url) return firstImage.image_url;
-    return '';
-  };
+  const rating = useMemo(() => generateRating(id || ''), [id]);
+  const reviewCount = useMemo(() => generateReviewCount(id || ''), [id]);
 
   // Handle variant selection
   const handleVariantSelect = (variant: ProductVariant) => {
@@ -380,20 +342,6 @@ export default function ProductDetailOptimized() {
     );
   }
 
-  const gallery = getGalleryImages();
-  const specifications = product.product_specifications?.reduce((acc, spec) => {
-    acc[spec.spec_name] = spec.spec_value;
-    return acc;
-  }, {} as { [key: string]: string });
-  
-  // Generate consistent review data for this product
-  const rating = generateRating(id || '');
-  const reviewCount = generateReviewCount(id || '');
-  
-  // Determine current and original (compare-at) prices generically:
-  // show the smaller as current and the larger crossed-out as compare-at
-  const { current: currentPrice, original: originalPrice } = computePrices(product, selectedVariant);
-
   return (
     <div className="page-scroll bg-background">
       {/* Header */}
@@ -416,9 +364,9 @@ export default function ProductDetailOptimized() {
             <Button variant="ghost" size="icon" onClick={handleShare}>
               <Share2 className="w-5 h-5" />
             </Button>
-            <Button 
-              variant="ghost" 
-              size="icon" 
+            <Button
+              variant="ghost"
+              size="icon"
               className="relative mr-1"
               onClick={() => navigate('/cart')}
             >
@@ -433,208 +381,52 @@ export default function ProductDetailOptimized() {
         </div>
       </header>
 
-      {/* Product Gallery */}
-      <div className="relative">
-        <div
-          className="aspect-square bg-gray-100 relative overflow-hidden touch-scroll select-none"
-          onTouchStart={onTouchStart}
-          onTouchMove={onTouchMove}
-          onTouchEnd={onTouchEnd}
-        >
-          {gallery.length > 0 && (
-            <img
-              key={selectedImageIndex}
-              src={gallery[selectedImageIndex]}
-              alt={product.name}
-              className="w-full h-full object-cover"
-              style={{ transform: `translateX(${touchDeltaX * 0.3}px)` } as React.CSSProperties}
-            />
-          )}
-          
-          {/* Gallery Navigation */}
-          {gallery.length > 1 && (
-            <>
-              <button
-                onClick={prevImage}
-                className="absolute left-4 top-1/2 -translate-y-1/2 p-2 rounded-full bg-white/80 backdrop-blur-sm shadow-lg"
-              >
-                <ChevronLeft className="w-5 h-5" />
-              </button>
-              <button
-                onClick={nextImage}
-                className="absolute right-4 top-1/2 -translate-y-1/2 p-2 rounded-full bg-white/80 backdrop-blur-sm shadow-lg"
-              >
-                <ChevronRight className="w-5 h-5" />
-              </button>
-              
-              {/* Image indicators */}
-              <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-2">
-                {gallery.map((_, index) => (
-                  <button
-                    key={index}
-                    onClick={() => setSelectedImageIndex(index)}
-                    className={`w-2 h-2 rounded-full transition-colors ${
-                      index === selectedImageIndex ? 'bg-white' : 'bg-white/50'
-                    }`}
-                  />
-                ))}
-              </div>
-            </>
-          )}
-        </div>
+      {/* Optimized Product Gallery */}
+      <ProductGallery
+        images={gallery}
+        productName={product.name}
+        priorityImage={gallery.length > 0 ? gallery[0] : undefined}
+      />
 
-        {/* Thumbnail Gallery */}
-        <div className="flex gap-2 p-4 overflow-x-auto">
-          {gallery.map((image, index) => (
-            <button
-              key={index}
-              onClick={() => setSelectedImageIndex(index)}
-              className={`flex-shrink-0 w-16 h-16 rounded-lg overflow-hidden border-2 transition-colors ${
-                index === selectedImageIndex ? 'border-primary' : 'border-gray-200'
-              }`}
-            >
-              <img
-                src={image}
-                alt={`${product.name} view ${index + 1}`}
-                className="w-full h-full object-cover"
-              />
-            </button>
-          ))}
-        </div>
+      {/* Optimized Product Info */}
+      <ProductInfo
+        product={product}
+        selectedVariant={selectedVariant}
+        rating={rating}
+        reviewCount={reviewCount}
+        currentPrice={currentPrice}
+        originalPrice={originalPrice}
+        variants={variants}
+        onVariantSelect={handleVariantSelect}
+      />
+
+      {/* Optimized Product Actions */}
+      <div className="p-4">
+        <ProductActions
+          product={product}
+          selectedVariant={selectedVariant}
+          quantity={quantity}
+          onQuantityChange={setQuantity}
+          onAddToCart={handleAddToCart}
+          onBuyNow={handleBuyNow}
+          cartQuantity={cartQuantity}
+          isActive={product.isActive}
+        />
       </div>
 
-      {/* Product Info - Critical Above-the-Fold Content */}
-      <div className="p-4 space-y-4">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">{product.name}</h1>
-          <div className="flex items-center gap-2 mt-2">
-            <div className="flex items-center">
-              {renderStars(Math.floor(rating))}
-              <span className="ml-2 text-sm text-muted-foreground">
-                {rating.toFixed(1)} ({reviewCount} {reviewCount === 1 ? 'review' : 'reviews'})
-              </span>
-            </div>
-          </div>
+      {/* Quick Info */}
+      <div className="grid grid-cols-3 gap-4 py-4 border-y border-border">
+        <div className="text-center">
+          <Shield className="w-6 h-6 mx-auto mb-1 text-primary" />
+          <div className="text-xs text-muted-foreground">1 Year Warranty</div>
         </div>
-
-        {/* Variants Selection */}
-        {variants.length > 0 && (
-          <div className="space-y-3">
-            <div className="space-y-2">
-              <h3 className="text-sm font-medium">Select Variant</h3>
-              <div className="flex flex-wrap gap-2">
-                {variants.map((variant) => (
-                  <button
-                    key={variant.id}
-                    onClick={() => handleVariantSelect(variant)}
-                    className={`px-3 py-1.5 text-sm rounded-full border transition-colors ${
-                      selectedVariant?.id === variant.id
-                        ? 'bg-primary text-primary-foreground border-primary'
-                        : 'bg-background text-foreground border-border hover:bg-muted'
-                    }`}
-                  >
-                    {variant.name}
-                  </button>
-                ))}
-              </div>
-            </div>
-            
-            {selectedVariant && (
-              <div className="text-sm text-muted-foreground">
-                Selected: {selectedVariant.name}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Price */}
-        <div className="flex items-center gap-3">
-          <span className="text-2xl font-bold text-black">₹{currentPrice.toLocaleString()}</span>
-          {originalPrice && (
-            <span className="text-lg text-muted-foreground line-through">
-              ₹{originalPrice.toLocaleString()}
-            </span>
-          )}
-          {originalPrice && (
-            <span className="text-sm bg-primary/10 text-primary px-2 py-1 rounded">
-              {Math.round(((originalPrice - currentPrice) / originalPrice) * 100)}% OFF
-            </span>
-          )}
+        <div className="text-center">
+          <Truck className="w-6 h-6 mx-auto mb-1 text-primary" />
+          <div className="text-xs text-muted-foreground">Free Shipping</div>
         </div>
-
-        {/* Quantity & Add to Cart */}
-        <div className="space-y-4">
-          <div className="flex items-center gap-4">
-            <span className="text-sm font-medium">Quantity:</span>
-            <div className="flex items-center border border-border rounded-lg">
-              <button
-                onClick={() => setQuantity(Math.max(1, quantity - 1))}
-                className="p-2 hover:bg-muted"
-              >
-                <Minus className="w-4 h-4" />
-              </button>
-              <span className="px-4 py-2 border-x border-border">{quantity}</span>
-              <button
-                onClick={() => setQuantity(quantity + 1)}
-                className="p-2 hover:bg-muted"
-              >
-                <Plus className="w-4 h-4" />
-              </button>
-            </div>
-          </div>
-
-          <div className="flex gap-3">
-            <Button 
-              className="flex-1 bg-pink-200 hover:bg-pink-300 text-gray-800" 
-              size="lg"
-              onClick={handleAddToCart}
-              disabled={!product.is_active || (selectedVariant ? selectedVariant.stockQuantity <= 0 : product.stock_quantity <= 0)}
-            >
-              <ShoppingBag className="w-4 h-4 mr-2" />
-              {product.is_active && (selectedVariant ? selectedVariant.stockQuantity > 0 : product.stock_quantity > 0) ? (
-                cartQuantity > 0 ? `In Cart (${cartQuantity + quantity})` : `Add ${quantity} to Cart`
-              ) : (
-                'Out of Stock'
-              )}
-            </Button>
-            <Button 
-              variant="outline" 
-              size="lg"
-              onClick={handleBuyNow}
-              disabled={!product.is_active || (selectedVariant ? selectedVariant.stockQuantity <= 0 : product.stock_quantity <= 0)}
-            >
-              {product.is_active && (selectedVariant ? selectedVariant.stockQuantity > 0 : product.stock_quantity > 0) ? 'Buy Now' : 'Out of Stock'}
-            </Button>
-          </div>
-        </div>
-
-        {/* FOMO Components */}
-        <div className="space-y-3">
-          <LowStockCounter stockQuantity={selectedVariant ? selectedVariant.stockQuantity : product.stock_quantity} />
-          <UrgencyMessaging />
-        </div>
-
-        {/* Social Proof Indicators */}
-        <SocialProofIndicators 
-          productId={id || ''} 
-          rating={rating} 
-          reviewCount={reviewCount} 
-        />
-
-        {/* Quick Info */}
-        <div className="grid grid-cols-3 gap-4 py-4 border-y border-border">
-          <div className="text-center">
-            <Shield className="w-6 h-6 mx-auto mb-1 text-primary" />
-            <div className="text-xs text-muted-foreground">1 Year Warranty</div>
-          </div>
-          <div className="text-center">
-            <Truck className="w-6 h-6 mx-auto mb-1 text-primary" />
-            <div className="text-xs text-muted-foreground">Free Shipping</div>
-          </div>
-          <div className="text-center">
-            <RotateCcw className="w-6 h-6 mx-auto mb-1 text-primary" />
-            <div className="text-xs text-muted-foreground">Easy Returns</div>
-          </div>
+        <div className="text-center">
+          <RotateCcw className="w-6 h-6 mx-auto mb-1 text-primary" />
+          <div className="text-xs text-muted-foreground">Easy Returns</div>
         </div>
       </div>
 
@@ -644,9 +436,9 @@ export default function ProductDetailOptimized() {
           <InlineLoading message="Loading product details..." />
         </div>
       }>
-        <ProductDescription 
-          description={product.description || product.short_description || 'No description available'}
-          specifications={specifications || {}}
+        <ProductDescription
+          description={product.description || product.shortDescription || 'No description available'}
+          specifications={specifications}
         />
       </Suspense>
 

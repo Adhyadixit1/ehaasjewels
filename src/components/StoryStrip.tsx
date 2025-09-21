@@ -12,6 +12,21 @@ interface StoryStripProps {
   onOpenStory: (storyIndex: number) => void;
 }
 
+// Attempt to generate an optimized thumbnail URL for Cloudinary-style URLs.
+// If not Cloudinary, fall back to the original URL.
+function getThumb(url: string, size = 64) {
+  try {
+    // Cloudinary delivery URLs typically contain '/upload/' segment
+    if (url.includes('/upload/')) {
+      // Simple resize transform - just add width and height
+      return url.replace('/upload/', `/upload/w_${size},h_${size},c_fill/`);
+    }
+  } catch (_) {
+    // noop
+  }
+  return url;
+}
+
 export function StoryStrip({ stories, onOpenStory }: StoryStripProps) {
   return (
     <div className="w-full overflow-x-auto py-4 px-4 scrollbar-hide">
@@ -28,10 +43,18 @@ export function StoryStrip({ stories, onOpenStory }: StoryStripProps) {
             <div className="relative">
               <div className="w-16 h-16 rounded-full overflow-hidden bg-pink-200 p-0.5">
                 <div className="w-full h-full rounded-full overflow-hidden">
-                  <img 
-                    src={story.image} 
+                  <img
+                    src={getThumb(story.image, 64)}
+                    srcSet={[
+                      `${getThumb(story.image, 48)} 48w`,
+                      `${getThumb(story.image, 64)} 64w`,
+                      `${getThumb(story.image, 96)} 96w`,
+                    ].join(', ')}
+                    sizes="64px"
                     alt={story.title}
-                    className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-300" 
+                    width={64}
+                    height={64}
+                    className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-300"
                     loading="eager"
                     decoding="async"
                   />

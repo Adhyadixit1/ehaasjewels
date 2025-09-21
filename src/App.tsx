@@ -38,9 +38,11 @@ import AdminOrderDetail from "@/pages/admin/AdminOrderDetail";
 import AdminUsers from "@/pages/admin/AdminUsers";
 import AdminAnalytics from "@/pages/admin/AdminAnalytics";
 import AdminSettings from "@/pages/admin/AdminSettings";
+import AdminTimeAnalytics from "@/pages/admin/AdminTimeAnalytics";
 import { AdminLayout } from "@/components/admin/AdminLayout";
 import { AdminRoute, PermissionRoute } from "@/components/admin/ProtectedRoute";
 import { PageTransition } from "@/components/PageTransition";
+import { TimeTracker } from "@/components/TimeTracker";
 
 // Scroll to top component
 function ScrollToTop() {
@@ -427,6 +429,17 @@ const router = createBrowserRouter([
         )
       },
       {
+        path: "time-analytics",
+        element: (
+          <Analytics>
+            <ScrollToTop />
+            <PageTransition>
+              <PermissionRoute permission="read:analytics"><AdminTimeAnalytics /></PermissionRoute>
+            </PageTransition>
+          </Analytics>
+        )
+      },
+      {
         path: "settings",
         element: (
           <Analytics>
@@ -470,7 +483,10 @@ const App = () => {
               isVisible={isVisible}
               onClose={hideNotification}
             />
-            <RouterProvider router={router} />
+            <>
+              <TimeTracker />
+              <RouterProvider router={router} />
+            </>
           </TooltipProvider>
           </WishlistProvider>
         </CartProvider>

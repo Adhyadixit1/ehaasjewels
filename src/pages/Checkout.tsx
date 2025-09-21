@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { useCart } from '@/contexts/CartContext';
@@ -82,6 +82,9 @@ const Checkout = () => {
   const navigate = useNavigate();
   const { cartItems, clearCart, getTotalPrice, getDiscountAmount, getFinalTotal } = useCart();
   const { user, isAuthenticated } = useAuth();
+  const saveDebounceRef = useRef<NodeJS.Timeout>();
+  const [sessionId, setSessionId] = useState<string>('');
+  
   const [shippingInfo, setShippingInfo] = useState<ShippingInfo>({
     fullName: '',
     email: '',
@@ -92,20 +95,192 @@ const Checkout = () => {
     pincode: '',
     landmark: ''
   });
+
   const [paymentInfo, setPaymentInfo] = useState<PaymentInfo>({ method: 'cod' });
   const [currentStep, setCurrentStep] = useState<'shipping' | 'payment' | 'review'>('shipping');
   const [isFetchingLocation, setIsFetchingLocation] = useState(false);
   const [showOrderLoader, setShowOrderLoader] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const hasTrackedInitiation = useRef(false);
+  
+  // Function to save checkout data (both for authenticated and unauthenticated users)
+  const saveCheckoutData = useCallback(async (addressData: Partial<ShippingInfo>) => {
+    if (!sessionId) {
+      console.log('No session ID available');
+      return;
+    }
 
-  // Track checkout initiation on component mount
+    // Don't save if required fields are missing
+    const requiredFields = ['address', 'city', 'state', 'pincode'];
+    const missingFields = requiredFields.filter(field => !addressData[field as keyof typeof addressData]);
+    
+    if (missingFields.length > 0) {
+      console.log('Not saving checkout: Missing required fields', missingFields);
+      return;
+    }
+
+    // Prepare cart items for saving
+    const cartItemsData = cartItems.map(item => ({
+      id: item.id,
+      name: item.name,
+      price: item.price,
+      quantity: item.quantity,
+      image: item.image,
+      variant: item.variantName || ''
+    }));
+
+    const checkoutData = {
+      session_id: sessionId,
+      user_id: isAuthenticated && user ? user.id : null,
+      full_name: addressData.fullName || shippingInfo.fullName,
+      email: addressData.email || shippingInfo.email,
+      phone: addressData.phone || shippingInfo.phone,
+      address: addressData.address,
+      city: addressData.city,
+      state: addressData.state,
+      pincode: addressData.pincode,
+      landmark: addressData.landmark || '',
+      cart_items: cartItemsData,
+      updated_at: new Date().toISOString()
+    };
+
+    console.log('Saving checkout data:', checkoutData);
+    
+    // Clear any existing timeout
+    if (saveDebounceRef.current) {
+      clearTimeout(saveDebounceRef.current);
+    }
+    
+    // Set a new timeout
+    saveDebounceRef.current = setTimeout(async () => {
+      try {
+        const { data, error } = await supabase
+          .from('abandoned_checkouts')
+          .upsert(checkoutData, {
+            onConflict: 'session_id',
+            ignoreDuplicates: false
+          })
+          .select();
+          
+        if (error) {
+          console.error('Error saving checkout data:', error);
+          if (error.details) console.error('Error details:', error.details);
+          if (error.hint) console.error('Error hint:', error.hint);
+          if (error.code) console.error('Error code:', error.code);
+        } else {
+          console.log('Checkout data saved successfully', data);
+        }
+      } catch (error) {
+        console.error('Unexpected error saving checkout data:', error);
+        if (error instanceof Error) {
+          console.error('Error stack:', error.stack);
+        }
+      }
+    }, 1000); // 1 second debounce
+  }, [isAuthenticated, user, shippingInfo, cartItems, sessionId]);
+
+  // Function to save address to user profile (for authenticated users only)
+  const saveAddressToProfile = useCallback(async (addressData: Partial<ShippingInfo>) => {
+    if (!isAuthenticated || !user) {
+      return;
+    }
+    
+    // Save to abandoned checkouts first
+    await saveCheckoutData(addressData);
+    
+    // Then save to user profile
+    const requiredFields = ['address', 'city', 'state', 'pincode'];
+    const missingFields = requiredFields.filter(field => !addressData[field as keyof typeof addressData]);
+    
+    if (missingFields.length > 0) {
+      return;
+    }
+    
+    try {
+      const { data, error } = await supabase
+        .from('user_addresses')
+        .upsert({
+          user_id: user.id,
+          full_name: shippingInfo.fullName,
+          email: shippingInfo.email,
+          phone: shippingInfo.phone,
+          address: addressData.address,
+          city: addressData.city,
+          state: addressData.state,
+          pincode: addressData.pincode,
+          landmark: addressData.landmark || '',
+          is_default: true,
+          updated_at: new Date().toISOString()
+        }, {
+          onConflict: 'user_id',
+          ignoreDuplicates: false
+        })
+        .select();
+        
+      if (error) {
+        console.error('Error saving address:', error);
+      } else {
+        console.log('Address saved to profile successfully', data);
+      }
+    } catch (error) {
+      console.error('Error saving address to profile:', error);
+    }
+  }, [isAuthenticated, user, shippingInfo, saveCheckoutData]);
+
+  // Initialize session ID and load abandoned checkout data
   useEffect(() => {
+    // Get or create session ID
+    const getOrCreateSessionId = () => {
+      let sessionId = localStorage.getItem('checkout_session_id');
+      if (!sessionId) {
+        sessionId = `anon_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        localStorage.setItem('checkout_session_id', sessionId);
+      }
+      setSessionId(sessionId);
+      return sessionId;
+    };
+
+    // Load abandoned checkout data
+    const loadAbandonedCheckout = async () => {
+      const currentSessionId = getOrCreateSessionId();
+      
+      try {
+        const { data, error } = await supabase
+          .from('abandoned_checkouts')
+          .select('*')
+          .eq('session_id', currentSessionId)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .single();
+
+        if (data && !error) {
+          setShippingInfo(prev => ({
+            ...prev,
+            fullName: data.full_name || '',
+            email: data.email || '',
+            phone: data.phone || '',
+            address: data.address || '',
+            city: data.city || '',
+            state: data.state || '',
+            pincode: data.pincode || '',
+            landmark: data.landmark || ''
+          }));
+          console.log('Loaded abandoned checkout data:', data);
+        }
+      } catch (error) {
+        console.error('Error loading abandoned checkout:', error);
+      }
+    };
+
+    // Track checkout initiation
     if (!hasTrackedInitiation.current) {
       trackCheckoutInitiation();
       hasTrackedInitiation.current = true;
+      
+      // Load abandoned checkout data after tracking initiation
+      loadAbandonedCheckout();
     }
-  }, []);
+  }, [isAuthenticated, user]);
 
   // Validate form fields in real-time
   useEffect(() => {
@@ -186,13 +361,55 @@ const Checkout = () => {
 
   // Clean up debounce timer on unmount
   useEffect(() => {
+    console.log('Setting up cleanup for pincode debounce timer');
     return () => {
+      console.log('Cleaning up pincode debounce timer');
       if (pincodeDebounceTimer.current) {
         clearTimeout(pincodeDebounceTimer.current);
       }
     };
-  });
+  }, []);
   
+  // Log when component mounts/unmounts
+  useEffect(() => {
+    console.log('Checkout component mounted');
+    return () => {
+      console.log('Checkout component unmounting');
+    };
+  }, []);
+  
+  // Cleanup function for useEffect
+  useEffect(() => {
+    return () => {
+      // Save any pending checkout data before unmounting
+      saveCheckoutData({
+        address: shippingInfo.address,
+        city: shippingInfo.city,
+        state: shippingInfo.state,
+        pincode: shippingInfo.pincode,
+        landmark: shippingInfo.landmark,
+        fullName: shippingInfo.fullName,
+        email: shippingInfo.email,
+        phone: shippingInfo.phone
+      });
+      
+      // Also save to user profile if authenticated
+      if (isAuthenticated && user) {
+        saveAddressToProfile({
+          address: shippingInfo.address,
+          city: shippingInfo.city,
+          state: shippingInfo.state,
+          pincode: shippingInfo.pincode,
+          landmark: shippingInfo.landmark
+        });
+      }
+      
+      if (saveDebounceRef.current) {
+        clearTimeout(saveDebounceRef.current);
+      }
+    };
+  }, [isAuthenticated, user, shippingInfo, saveAddressToProfile, saveCheckoutData]);
+
   // Load user profile data when authenticated
   useEffect(() => {
     const loadUserProfile = async () => {
@@ -447,7 +664,10 @@ const Checkout = () => {
               <Input
                 id="fullName"
                 value={shippingInfo.fullName}
-                onChange={(e) => setShippingInfo({...shippingInfo, fullName: e.target.value})}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  setShippingInfo(prev => ({...prev, fullName: value}));
+                }}
                 required
                 className={errors.fullName ? 'border-red-500' : ''}
               />
@@ -464,7 +684,7 @@ const Checkout = () => {
                 onChange={(e) => {
                   // Allow only numbers and limit to 10 digits
                   const value = e.target.value.replace(/\D/g, '').slice(0, 10);
-                  setShippingInfo({...shippingInfo, phone: value});
+                  setShippingInfo(prev => ({...prev, phone: value}));
                 }}
                 required
                 minLength={10}
@@ -483,7 +703,10 @@ const Checkout = () => {
               id="email"
               type="email"
               value={shippingInfo.email}
-              onChange={(e) => setShippingInfo({...shippingInfo, email: e.target.value})}
+              onChange={(e) => {
+                const value = e.target.value;
+                setShippingInfo(prev => ({...prev, email: value}));
+              }}
               placeholder="Optional - Leave blank for guest checkout"
             />
             <p className="text-sm text-muted-foreground mt-1">
@@ -502,22 +725,33 @@ const Checkout = () => {
                   onChange={(e) => {
                     // Allow only numbers and limit to 6 digits for Indian PIN codes
                     const value = e.target.value.replace(/\D/g, '').slice(0, 6);
-                    setShippingInfo({...shippingInfo, pincode: value});
+                    const newShippingInfo = {
+                      ...shippingInfo,
+                      pincode: value
+                    };
+                    
+                    setShippingInfo(newShippingInfo);
                     
                     // Clear city and state when PIN code changes
                     if (value.length !== 6) {
-                      setShippingInfo(prev => ({
-                        ...prev,
-                        city: '',
-                        state: ''
-                      }));
+                      newShippingInfo.city = '';
+                      newShippingInfo.state = '';
+                      setShippingInfo({...newShippingInfo});
                     }
                     
                     // Fetch city and state when PIN code is complete
                     if (value.length === 6) {
                       fetchLocationByPincode(value);
                     }
-                  }}
+                    
+                    // Save address when pincode is complete
+                    if (value.length === 6) {
+                      saveAddressToProfile({
+                        ...newShippingInfo,
+                        pincode: value
+                      });
+                    }
+                  }}  
                   required
                   minLength={6}
                   maxLength={6}
@@ -539,7 +773,22 @@ const Checkout = () => {
               <Input
                 id="city"
                 value={shippingInfo.city}
-                onChange={(e) => setShippingInfo({...shippingInfo, city: e.target.value})}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  setShippingInfo(prev => ({
+                    ...prev,
+                    city: value
+                  }));
+                  
+                  // Save address when city changes
+                  saveAddressToProfile({
+                    city: value,
+                    state: shippingInfo.state,
+                    pincode: shippingInfo.pincode,
+                    address: shippingInfo.address,
+                    landmark: shippingInfo.landmark
+                  });
+                }}
                 required
                 className={errors.city ? 'border-red-500' : ''}
               />
@@ -552,7 +801,22 @@ const Checkout = () => {
               <Input
                 id="state"
                 value={shippingInfo.state}
-                onChange={(e) => setShippingInfo({...shippingInfo, state: e.target.value})}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  setShippingInfo(prev => ({
+                    ...prev,
+                    state: value
+                  }));
+                  
+                  // Save address when state changes
+                  saveAddressToProfile({
+                    city: shippingInfo.city,
+                    state: value,
+                    pincode: shippingInfo.pincode,
+                    address: shippingInfo.address,
+                    landmark: shippingInfo.landmark
+                  });
+                }}
                 required
                 className={errors.state ? 'border-red-500' : ''}
               />
@@ -566,7 +830,22 @@ const Checkout = () => {
             <Input
               id="address"
               value={shippingInfo.address}
-              onChange={(e) => setShippingInfo({...shippingInfo, address: e.target.value})}
+              onChange={(e) => {
+                const value = e.target.value;
+                setShippingInfo(prev => ({
+                  ...prev,
+                  address: value
+                }));
+                
+                // Save address when street address changes
+                saveAddressToProfile({
+                  address: value,
+                  city: shippingInfo.city,
+                  state: shippingInfo.state,
+                  pincode: shippingInfo.pincode,
+                  landmark: shippingInfo.landmark
+                });
+              }}
               required
               className={errors.address ? 'border-red-500' : ''}
             />
@@ -579,7 +858,22 @@ const Checkout = () => {
             <Input
               id="landmark"
               value={shippingInfo.landmark}
-              onChange={(e) => setShippingInfo({...shippingInfo, landmark: e.target.value})}
+              onChange={(e) => {
+                const value = e.target.value;
+                setShippingInfo(prev => ({
+                  ...prev,
+                  landmark: value
+                }));
+                
+                // Save address when landmark changes
+                saveAddressToProfile({
+                  landmark: value,
+                  address: shippingInfo.address,
+                  city: shippingInfo.city,
+                  state: shippingInfo.state,
+                  pincode: shippingInfo.pincode
+                });
+              }}
               placeholder="Near railway station, opposite hospital, etc."
             />
             <p className="text-sm text-muted-foreground mt-1">

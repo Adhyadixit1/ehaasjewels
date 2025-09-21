@@ -178,6 +178,59 @@ export const CartProvider: React.FC<CartProviderProps> = ({ children }) => {
     trackVisitorAnalytics(sessionId, 'page_view');
   }, [sessionId]);
 
+  // Track time spent on page and update visit duration in Supabase
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof document === 'undefined') return;
+
+    let pageLoadTime = new Date();
+    let isActive = true;
+
+    const recordTimeSpent = async () => {
+      if (!isActive) return;
+      const now = new Date();
+      const seconds = Math.floor((now.getTime() - pageLoadTime.getTime()) / 1000);
+      if (seconds <= 0) return;
+
+      try {
+        const { error } = await supabase.rpc('update_visit_duration', {
+          p_session_id: sessionId,
+          p_time_spent: seconds,
+        });
+        if (error) {
+          console.error('Error updating visit duration:', error);
+        } else {
+          console.log('⏱️ Visit duration updated:', seconds, 'seconds');
+        }
+      } catch (err) {
+        console.error('Error calling update_visit_duration:', err);
+      } finally {
+        // reset counter after sending
+        pageLoadTime = new Date();
+      }
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        // tab hidden, record time so far
+        recordTimeSpent();
+      } else if (document.visibilityState === 'visible') {
+        // reset start time when returning
+        pageLoadTime = new Date();
+      }
+    };
+
+    window.addEventListener('beforeunload', recordTimeSpent);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      isActive = false;
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('beforeunload', recordTimeSpent);
+      // final flush on unmount
+      recordTimeSpent();
+    };
+  }, [sessionId]);
+
   const addToCart = (item: Omit<CartItem, 'quantity'>, quantity: number = 1) => {
     setCartItems(prevItems => {
       const existingItem = prevItems.find(cartItem => cartItem.id === item.id);

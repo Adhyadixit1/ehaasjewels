@@ -1,35 +1,11 @@
 import { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
-import { ProductCacheService } from '@/services/ProductCacheService';
-import { ProductService } from '@/services/ProductService';
-
-interface Product {
-  id: number;
-  name: string;
-  price: number;
-  sale_price?: number;
-  average_rating?: number;
-  review_count?: number;
-  description?: string;
-  short_description?: string;
-  sku: string;
-  stock_quantity: number;
-  is_active: boolean;
-  featured: boolean;
-  category_id?: number;
-  categories?: {
-    name: string;
-  };
-  product_images?: {
-    image_url: string;
-    is_primary: boolean;
-    media_type?: string;
-  }[];
-}
+// import { ProductCacheService } from '@/services/ProductCacheService';
+import { ProductService, ProductData } from '@/services/ProductService';
 
 export function ProductDetailSplash() {
   const { id } = useParams<{ id: string }>();
-  const [product, setProduct] = useState<Product | null>(null);
+  const [product, setProduct] = useState<ProductData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -41,23 +17,12 @@ export function ProductDetailSplash() {
         setLoading(true);
         setError(null);
 
-        // Check cache first for instant loading
-        const cachedProduct = ProductCacheService.getCachedProduct(id);
-        if (cachedProduct) {
-          setProduct(cachedProduct);
-          setLoading(false);
-          return;
-        }
-
         // Fetch minimal product data for preview
         const productData = await ProductService.getProductById(id);
-        
+
         if (productData) {
           setProduct(productData);
           setLoading(false);
-          
-          // Cache the product for future visits
-          ProductCacheService.cacheProduct(id, productData);
         } else {
           setError('Product not found');
           setLoading(false);

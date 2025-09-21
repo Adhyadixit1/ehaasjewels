@@ -87,6 +87,7 @@ const navigation: NavigationItem[] = [
       { name: 'Sales Reports', href: '/admin/analytics/sales', icon: BarChart3 },
       { name: 'Product Analytics', href: '/admin/analytics/products', icon: BarChart3 },
       { name: 'Visitor Tracking', href: '/admin/analytics/visitors', icon: BarChart3 },
+      { name: 'Time Analytics', href: '/admin/time-analytics', icon: BarChart3 },
     ]
   },
   {
