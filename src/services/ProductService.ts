@@ -373,4 +373,128 @@ export class ProductService {
       })) || []
     }));
   }
+
+  /**
+   * Get categories
+   */
+  static async getCategories() {
+    try {
+      const { data, error } = await supabase
+        .from('categories')
+        .select('*')
+        .order('name');
+
+      if (error) {
+        throw new Error(`Failed to fetch categories: ${error.message}`);
+      }
+
+      return data || [];
+    } catch (error) {
+      console.error('Error in getCategories:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get category by name
+   */
+  static async getCategoryByName(name: string) {
+    try {
+      const { data, error } = await supabase
+        .from('categories')
+        .select('*')
+        .eq('name', name)
+        .single();
+
+      if (error) {
+        if (error.code === 'PGRST116') {
+          // No rows found
+          return null;
+        }
+        throw new Error(`Failed to fetch category: ${error.message}`);
+      }
+
+      return data;
+    } catch (error) {
+      console.error('Error in getCategoryByName:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get featured products
+   */
+  static async getFeaturedProducts(limit = 24) {
+    try {
+      const selectFields = `
+        *,
+        categories (name),
+        product_images (id, image_url, is_primary, media_type)
+      `;
+
+      const { data, error } = await supabase
+        .from('products')
+        .select(selectFields)
+        .eq('is_active', true)
+        .eq('featured', true)
+        .order('created_at', { ascending: false })
+        .limit(limit);
+
+      if (error) {
+        throw new Error(`Failed to fetch featured products: ${error.message}`);
+      }
+
+      return this.processProductData(data || []);
+    } catch (error) {
+      console.error('Error in getFeaturedProducts:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get related products based on category
+   */
+  static async getRelatedProducts(productId: string, limit = 4) {
+    try {
+      // First get the current product's category
+      const { data: currentProduct, error: productError } = await supabase
+        .from('products')
+        .select('category_id')
+        .eq('id', parseInt(productId))
+        .single();
+
+      if (productError) {
+        throw new Error(`Failed to fetch product category: ${productError.message}`);
+      }
+
+      if (!currentProduct) {
+        return [];
+      }
+
+      const selectFields = `
+        *,
+        categories (name),
+        product_images (id, image_url, is_primary, media_type)
+      `;
+
+      // Get products from the same category, excluding the current product
+      const { data, error } = await supabase
+        .from('products')
+        .select(selectFields)
+        .eq('is_active', true)
+        .eq('category_id', currentProduct.category_id)
+        .neq('id', parseInt(productId))
+        .order('created_at', { ascending: false })
+        .limit(limit);
+
+      if (error) {
+        throw new Error(`Failed to fetch related products: ${error.message}`);
+      }
+
+      return this.processProductData(data || []);
+    } catch (error) {
+      console.error('Error in getRelatedProducts:', error);
+      throw error;
+    }
+  }
 }
